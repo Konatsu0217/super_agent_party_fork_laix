@@ -22,7 +22,12 @@
         "NoModelProvidersConfigured": "没有配置模型服务商",
         "timeSlotConfig": "时间片配置",
         "enableTimeSlot": "启用时间片机制",
+        "timeSlotMode": "时间片模式",
         "timeSlotDuration": "时间片长度",
+        "minTimeSlotDuration": "最小时间片长度",
+        "maxTimeSlotDuration": "最大时间片长度",
+        "danmuDensityThreshold": "弹幕密度阈值",
+        "timeSlotAdaptInterval": "自适应调整间隔",
         "maxDanmuPerSlot": "每时间片最大弹幕数"
     },
     "en-US":{
@@ -48,7 +53,12 @@
         "NoModelProvidersConfigured": "No model providers configured",
         "timeSlotConfig": "Time Slot Configuration",
         "enableTimeSlot": "Enable Time Slot Mechanism",
+        "timeSlotMode": "Time Slot Mode",
         "timeSlotDuration": "Time Slot Duration",
+        "minTimeSlotDuration": "Min Time Slot Duration",
+        "maxTimeSlotDuration": "Max Time Slot Duration",
+        "danmuDensityThreshold": "Danmu Density Threshold",
+        "timeSlotAdaptInterval": "Time Slot Adapt Interval",
         "maxDanmuPerSlot": "Max Danmu per Slot"
     }
 }

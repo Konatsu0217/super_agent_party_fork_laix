@@ -1201,6 +1201,11 @@ let vue_data = {
       timeSlotEnabled: false, // 是否启用时间片机制
       timeSlotDuration: 30, // 时间片长度（秒）
       maxDanmuPerSlot: 10, // 每个时间片最大弹幕数量
+      timeSlotMode: 'fixed', // 时间片模式: 'fixed'固定长度, 'dynamic'动态长度, 'smart'智能长度
+      minTimeSlotDuration: 15, // 最小时间片长度
+      maxTimeSlotDuration: 120, // 最大时间片长度
+      danmuDensityThreshold: 5, // 弹幕密度阈值，超过此数量触发时间片处理
+      timeSlotAdaptInterval: 300, // 时间片自适应调整间隔（秒）
       bilibili_enabled: false,
       bilibili_type: 'web',
       bilibili_room_id: '',
