@@ -6647,7 +6647,7 @@ let vue_methods = {
           lastAdaptTime: Date.now()
         };
       } else {
-        console.log('时间片分析失败:', result.message);
+        console.log('时间片弹幕分析失败:', result.message);
         // 如果分析失败，清空弹幕避免堆积
         this.timeSlotDanmu = [];
       }
@@ -6822,7 +6822,7 @@ let vue_methods = {
           this.timeSlotDanmu = this.timeSlotDanmu.slice(0, this.liveConfig.maxDanmuPerSlot);
         }
         
-        console.log('收到新弹幕(时间片模式):', danmuItem.content, '当前时间片队列长度:', this.timeSlotDanmu.length);
+        console.log('收到新弹幕（时间片模式）:', danmuItem.content, '当前时间片队列长度:', this.timeSlotDanmu.length);
       } else {
         // 传统模式：直接添加到弹幕队列
         if (this.liveConfig.onlyDanmaku){
@@ -6838,7 +6838,7 @@ let vue_methods = {
           this.danmu = this.danmu.slice(0, this.liveConfig.danmakuQueueLimit);
         }
         
-        console.log('收到新弹幕(传统模式):', danmuItem.content, '当前队列长度:', this.danmu.length);
+        console.log('收到新弹幕（传统模式）:', danmuItem.content, '当前队列长度:', this.danmu.length);
       }
       
     } else if (data.type === 'error') {
