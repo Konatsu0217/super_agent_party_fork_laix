@@ -4451,7 +4451,7 @@ def parse_animation_commands(text: str) -> List[Dict[str, Any]]:
     available_animations = [
         'akimbo', 'cool_roll_show', 'cool_side', 'cute_jump_and_hello',
         'play_fingers', 'roll_and_show', 'scratch_head', 'shoot_your_heart',
-        'squats', 'stretch', 'v_pose'
+        'squats', 'stretch', 'v_pose','dance','dance2'
     ]
     
     # 匹配模式1: [ANIMATION:name] 或 [动画:name]
