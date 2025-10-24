@@ -853,11 +853,22 @@ class IdleAnimationManager {
                         this.currentIndex = this.animationQueue.findIndex(anim => anim.name === this.insertedAnimation.name);
                         this.playVRMAAnimation(this.insertedAnimation);
 
-
-
                         // 清除插入动画标记
                         this.hasInsertedAnimation = false;
                         this.insertedAnimation = null;
+                        
+                        // 重置currentIndex，确保不等于当前播放的动画索引，避免重复播放同一个动画
+                        const currentAnimIndex = this.currentIndex;
+                        const queueLength = this.animationQueue.length;
+                        if (queueLength > 1) {
+                            // 随机选择一个不同于当前动画的索引
+                            let newIndex;
+                            do {
+                                newIndex = Math.floor(Math.random() * queueLength);
+                            } while (newIndex === currentAnimIndex);
+                            this.currentIndex = newIndex;
+                            console.log(`Reset currentIndex from ${currentAnimIndex} to ${newIndex} after inserted animation`);
+                        }
                     }
                 }, additionalDelay);
             }
