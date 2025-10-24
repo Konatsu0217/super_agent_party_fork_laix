@@ -47,5 +47,97 @@
 			}
 		</script>
 		<script type="module" src="js/vrm.js"></script>
+		
+		<!-- Debug面板 -->
+		<div id="debug-panel" style="
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			background: rgba(0, 0, 0, 0.8);
+			color: white;
+			padding: 15px;
+			border-radius: 8px;
+			font-family: Arial, sans-serif;
+			font-size: 12px;
+			max-width: 300px;
+			z-index: 1000;
+		">
+			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+				<strong>Debug Panel</strong>
+				<button onclick="toggleDebugPanel()" style="background: #444; color: white; border: none; padding: 2px 8px; border-radius: 3px; cursor: pointer;">✕</button>
+			</div>
+			<div id="animation-buttons" style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px;">
+				<!-- 动画按钮将在这里动态生成 -->
+			</div>
+		</div>
+		
+		<script>
+			// 动画文件列表
+			const animationFiles = [
+				'akimbo.vrma',
+				'cool_roll_show.vrma',
+				'cool_side.vrma',
+				'cute_jump_and_hello.vrma',
+				'play_fingers.vrma',
+				'roll_and_show.vrma',
+				'scratch_head.vrma',
+				'shoot_your_heart.vrma',
+				'squats.vrma',
+				'stretch.vrma',
+				'v_pose.vrma'
+			];
+			
+			// 生成动画按钮
+			function generateAnimationButtons() {
+				const container = document.getElementById('animation-buttons');
+				container.innerHTML = '';
+				
+				animationFiles.forEach(file => {
+					const button = document.createElement('button');
+					const buttonText = file.replace('.vrma', '').replace(/_/g, ' ');
+					button.textContent = buttonText;
+					button.style.cssText = `
+						background: #4CAF50;
+						color: white;
+						border: none;
+						padding: 8px 12px;
+						border-radius: 4px;
+						cursor: pointer;
+						font-size: 11px;
+						transition: background 0.2s;
+					`;
+					button.onmouseover = () => button.style.background = '#45a049';
+					button.onmouseout = () => button.style.background = '#4CAF50';
+					button.onclick = () => {
+						const animName = file.replace('.vrma', '');
+						console.log(`Debug: Calling chooseAnimationToPlay with animation: ${animName}`);
+						if (window.idleAnimationManager && window.idleAnimationManager.chooseAnimationToPlay) {
+							window.idleAnimationManager.chooseAnimationToPlay(animName);
+						} else {
+							console.warn('IdleAnimationManager not available. Make sure VRM model is fully loaded.');
+						}
+					};
+					container.appendChild(button);
+				});
+			}
+			
+			// 切换debug面板显示/隐藏
+			function toggleDebugPanel() {
+				const panel = document.getElementById('debug-panel');
+				if (panel.style.display === 'none') {
+					panel.style.display = 'block';
+				} else {
+					panel.style.display = 'none';
+				}
+			}
+			
+			// 页面加载完成后生成按钮
+			document.addEventListener('DOMContentLoaded', function() {
+				generateAnimationButtons();
+			});
+			
+			// 暴露函数到全局作用域
+			window.toggleDebugPanel = toggleDebugPanel;
+		</script>
 	</body>
 </html>
