@@ -1357,8 +1357,269 @@ function createBlinkClip(vrm) {
 }
 
 /**
+ * 获取当前语言设置
+ * 从服务器获取当前使用的语言配置
+ * @returns {Promise<string>} 返回语言代码，如 'zh-CN' 或 'en-US'
+ */
+async function fetchLanguage() {
+    try {
+        const http_protocol = window.location.protocol;
+        const HOST = window.location.host;
+        let res = await fetch(`${http_protocol}//${HOST}/cur_language`);
+        const data = await res.json();
+        return data.language;
+    } catch (error) {
+        console.error('Error fetching language:', error);
+        return 'zh-CN';
+    }
+}
+
+/**
+ * 翻译函数
+ * 根据当前语言获取对应的翻译文本
+ * @param {string} key 翻译键值
+ * @returns {Promise<string>} 返回翻译后的文本
+ */
+async function t(key) {
+    const currentLanguage = await fetchLanguage();
+    return translations[currentLanguage][key] || key;
+}
+
+/**
+ * 获取VRM配置信息
+ * 从服务器获取VRM模型的配置，包括模型、动作、场景等设置
+ * @returns {Promise<Object>} 返回VRM配置对象
+ */
+async function fetchVRMConfig() {
+    try {
+        const http_protocol = window.location.protocol;
+        const HOST = window.location.host;
+        let res = await fetch(`${http_protocol}//${HOST}/vrm_config`);
+        const data = await res.json();
+        if(data.VRMConfig.name != 'default'){
+            data.VRMConfig.selectedModelId = data.VRMConfig.selectedNewModelId;
+            data.VRMConfig.selectedMotionIds = data.VRMConfig.selectedNewMotionIds;
+        }
+        if (data.VRMConfig.selectedGaussSceneId == ''){
+            data.VRMConfig.selectedGaussSceneId = 'transparent';
+        }
+        console.log(data.VRMConfig);
+        return data.VRMConfig;
+    } catch (error) {
+        console.error('Error fetching VRMConfig:', error);
+        return   {
+            name: 'default',
+            enabledExpressions: false,
+            selectedModelId: 'alice', // 默认选择Alice模型
+            defaultModels: [], // 存储默认模型
+            userModels: [],     // 存储用户上传的模型
+            defaultMotions: [], // 存储默认动作
+            userMotions: [],     // 存储用户上传的动作
+            selectedMotionIds: [],
+            gaussDefaultScenes: [],   // GAUSS
+            gaussUserScenes: [],      // GAUSS
+            selectedGaussSceneId: 'transparent',
+        };
+    }
+}
+
+/**
+ * 获取VRM模型路径
+ * 根据配置获取当前选中的VRM模型的完整URL路径
+ * @returns {Promise<string>} 返回VRM模型的URL路径
+ */
+async function getVRMpath() {
+    const vrmConfig = await fetchVRMConfig();
+    const modelId = vrmConfig.selectedModelId;
+    const defaultModel = vrmConfig.defaultModels.find(model => model.id === modelId) || vrmConfig.userModels.find(model => model.id === modelId);
+    if (defaultModel) {
+        // 替换defaultModel.path中的protocol和host
+        let defaultModelURL = new URL(defaultModel.path);
+        defaultModelURL.protocol = window.location.protocol;
+        defaultModelURL.host = window.location.host;
+        return defaultModelURL.toString();
+    } else {
+        const userModel = vrmConfig.userModels.find(model => model.id === modelId);
+        if (userModel) {
+            // 替换userModel.path中的protocol和host
+            let userModelURL = new URL(userModel.path);
+            userModelURL.protocol = window.location.protocol;
+            userModelURL.host = window.location.host;
+            return userModelURL.toString();
+        }
+        else {
+            return `${window.location.protocol}//${window.location.host}/vrm/Alice.vrm`;
+        }
+    }
+}
+
+/**
+ * 获取VRM模型名称
+ * 根据配置获取当前选中的VRM模型的名称
+ * @returns {Promise<string>} 返回模型名称
+ */
+async function getVRMname() {
+    const vrmConfig = await fetchVRMConfig();
+    const modelId = vrmConfig.selectedModelId;
+    const defaultModel = vrmConfig.defaultModels.find(model => model.id === modelId) || vrmConfig.userModels.find(model => model.id === modelId);
+    if (defaultModel) {
+        return defaultModel.name;
+    } else {
+        const userModel = vrmConfig.userModels.find(model => model.id === modelId);
+        if (userModel) {
+            return userModel.name;
+        }
+        else {
+            return 'Alice';
+        }
+    }
+}
+
+/**
+ * 加载高斯场景
+ * 根据配置加载3D场景，可以是透明场景或具体的3D场景文件
+ * @returns {Promise<void>}
+ */
+async function loadGaussScene() {
+    /* ---------- 1. 读配置 ---------- */
+    const cfg        = await fetchVRMConfig();
+    const sceneId    = cfg.selectedGaussSceneId;
+    const defaultArr = cfg.gaussDefaultScenes || [];
+    const userArr    = cfg.gaussUserScenes    || [];
+
+    /* ---------- 2. 拼 URL ---------- */
+    let sceneURL = null;
+    if (sceneId === 'transparent') {
+        /* 透明场景 -> 不下载 spz */
+        sceneURL = 'transparent';
+    } else {
+        const hit = [...defaultArr, ...userArr].find(s => s.id === sceneId);
+        if (!hit) {
+            console.warn(`[SceneLoader] 找不到 id=${sceneId} 的场景，回退到 transparent`);
+            sceneURL = 'transparent';
+        } else {
+            // 把相对 path 拼成绝对地址
+            const url = new URL(hit.path);
+            url.protocol = window.location.protocol;
+            url.host     = window.location.host;
+            sceneURL     = url.toString();
+        }
+    }
+
+    /* ---------- 3. 卸载旧场景 ---------- */
+    if (currentSceneGroup) {
+        scene.remove(currentSceneGroup);
+        currentSceneGroup.traverse(o => {
+            if (o.dispose) o.dispose();      // SplatMesh 自带 dispose
+        });
+        currentSceneGroup = null;
+    }
+
+    /* ---------- 4. 构建新场景 ---------- */
+    const group = new THREE.Group();
+    group.name = `gaussScene_${sceneId}`;
+
+    if (sceneURL === 'transparent') {
+        /* ------ 4.1 透明阴影地面 ------ */
+        const groundGeo = new THREE.PlaneGeometry(20, 20);
+        const shadowMat = new THREE.ShadowMaterial({ opacity: 0.4 });
+        const ground    = new THREE.Mesh(groundGeo, shadowMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        group.add(ground);
+    } else {
+        /* ------ 4.2 加载 .spz ------ */
+        const splat = new SplatMesh({ url: sceneURL });
+        let splat_height = 0;
+        let splat_scale = 2;
+        if (sceneId === 'space') {
+            splat_height = 1.55;
+        }else if (sceneId === 'home') {
+            splat_height = 1.6;
+        }else if (sceneId === 'sea') {
+            splat_height = 2.4;
+            splat_scale = 4;
+        }
+        // 统一先缩放/位移到脚底中心，具体数值可按模型微调
+        splat.quaternion.set(1, 0, 0, 0);
+        splat.position.set(0, splat_height, 2);
+        splat.scale.set(splat_scale, splat_scale, splat_scale);
+        splat.receiveShadow = true;
+        group.add(splat);
+    }
+
+    /* ---------- 5. 挂到场景 ---------- */
+    scene.add(group);
+    currentSceneGroup = group;
+    console.log(`[SceneLoader] 场景 ${sceneId} 加载完成`);
+}
+
+/**
+ * 设置自然姿势
+ * 将VRM模型的骨骼设置为自然的站立姿势，包括手臂、手指等的自然弯曲
+ * @param {Object} vrm VRM模型对象
+ */
+function setNaturalPose(vrm) {
+    if (!vrm.humanoid) return;
+    let v = 1;
+    if (!isVRM1){
+        v = -1;
+    }
+    // 左臂自然下垂
+    vrm.humanoid.getNormalizedBoneNode( 'leftUpperArm' ).rotation.z = -0.4 * Math.PI * v;
+
+    // 右臂自然下垂
+    vrm.humanoid.getNormalizedBoneNode( 'rightUpperArm' ).rotation.z = 0.4 * Math.PI * v;
+    
+    const leftHand = vrm.humanoid.getNormalizedBoneNode('leftHand');
+    if (leftHand) {
+        leftHand.rotation.z = 0.1 * v; // 手腕自然弯曲
+        leftHand.rotation.x = 0.05;
+    }
+    const rightHand = vrm.humanoid.getNormalizedBoneNode('rightHand');
+    if (rightHand) {
+        rightHand.rotation.z = -0.1 * v; // 手腕自然弯曲
+        rightHand.rotation.x = 0.05;
+    }
+    // 添加手指的自然弯曲（如果模型支持）
+    const fingerBones = [
+        'leftThumbProximal', 'leftThumbIntermediate', 'leftThumbDistal',
+        'leftIndexProximal', 'leftIndexIntermediate', 'leftIndexDistal',
+        'leftMiddleProximal', 'leftMiddleIntermediate', 'leftMiddleDistal',
+        'leftRingProximal', 'leftRingIntermediate', 'leftRingDistal',
+        'leftLittleProximal', 'leftLittleIntermediate', 'leftLittleDistal',
+        'rightThumbProximal', 'rightThumbIntermediate', 'rightThumbDistal',
+        'rightIndexProximal', 'rightIndexIntermediate', 'rightIndexDistal',
+        'rightMiddleProximal', 'rightMiddleIntermediate', 'rightMiddleDistal',
+        'rightRingProximal', 'rightRingIntermediate', 'rightRingDistal',
+        'rightLittleProximal', 'rightLittleIntermediate', 'rightLittleDistal'
+    ];
+
+    fingerBones.forEach(boneName => {
+        const bone = vrm.humanoid.getNormalizedBoneNode(boneName);
+        if (bone) {
+            // 根据手指部位设置不同的弯曲度
+            if (boneName.includes('Thumb')) {
+                // 拇指稍微向内
+                bone.rotation.y = boneName.includes('left') ? 0.35 : -0.35;
+            } else if (boneName.includes('Proximal')) {
+                // 近端指骨轻微弯曲
+                bone.rotation.z = boneName.includes('left') ? -0.35 * v : 0.35 * v;
+            } else if (boneName.includes('Intermediate')) {
+                // 中端指骨稍微弯曲
+                bone.rotation.z = boneName.includes('left') ? -0.45 * v : 0.45 * v;
+            } else if (boneName.includes('Distal')) {
+                // 远端指骨轻微弯曲
+                bone.rotation.z = boneName.includes('left') ? -0.3 * v : 0.3 * v;
+            }
+        }
+    });
+}
+
+/**
  * 停止指定语音块的动画和音频
- * @param {string|number} chunkId 语音块的ID
+ * 用于停止特定语音块的口型同步动画和音频播放
+ * @param {string|number} chunkId 语音块的唯一标识ID
  */
 function stopChunkAnimation(chunkId) {
     const chunkState = chunkAnimations.get(chunkId);
@@ -1389,6 +1650,7 @@ function stopChunkAnimation(chunkId) {
 
 /**
  * 停止所有正在播放的语音动画
+ * 清除所有语音块的动画和音频，重置表情状态
  */
 function stopAllChunkAnimations() {
     console.log('正在停止所有的口型同步动画。');
@@ -1403,8 +1665,9 @@ function stopAllChunkAnimations() {
 
 /**
  * 单个语音块的动画循环，用于驱动口型
- * @param {string|number} chunkId 
- * @param {object} chunkState 
+ * 根据音频数据实时更新VRM模型的口型和表情
+ * @param {string|number} chunkId 语音块的唯一标识ID
+ * @param {object} chunkState 语音块的状态对象，包含音频和动画信息
  */
 function startChunkAnimation(chunkId, chunkState) {
     if (!chunkState || !chunkState.isPlaying || !chunkState.analyser) {
@@ -1491,7 +1754,11 @@ function startChunkAnimation(chunkId, chunkState) {
 
 /**
  * 为单个语音块启动基于音频分析的口型同步
+ * 处理语音块的音频数据，实现实时口型同步和表情控制
  * @param {object} data 包含音频和表情信息的数据对象
+ * @param {string} data.audioDataUrl 音频数据的Base64编码URL
+ * @param {number} data.chunkIndex 语音块索引
+ * @param {string[]} data.expressions 表情标签数组
  */
 async function startLipSyncForChunk(data) {
     const chunkId = data.chunkIndex;
@@ -1660,6 +1927,7 @@ loader.load(
         blinkAction.play();
 
         // 创建闲置动画管理器
+        // todo 这里的Manager可以拿出来控制动作，新增下接口给外部server调用
         idleAnimationManager = new IdleAnimationManager(vrm, currentMixer);
 
         // 开始闲置动画循环
@@ -1857,6 +2125,7 @@ const VMC_BONES = [                           // VMC 标准骨骼列表
 /**
  * 把当前 VRM 骨骼打成 VMC-OSC 消息发出去
  * 自动 30 fps 节流，仅 Electron 有效
+ * 用于将VRM模型的骨骼数据发送到VMC协议接收端，实现动作捕捉功能
  */
 function sendVMCBones() {
   if (!window.vmcAPI || !currentVrm?.humanoid) return;
@@ -1921,6 +2190,11 @@ let lastBlendWeights = {}; // 节流：变化了才发
 
 
 
+/**
+ * 发送VRM表情数据到VMC协议
+ * 将VRM模型的表情（Blend Shape）数据转换为VMC格式并发送
+ * 用于实现表情同步功能
+ */
 function sendVMCBlends() {
   if (!window.vmcAPI || !currentVrm?.expressionManager) return;
 
@@ -1967,11 +2241,11 @@ const vmcToVrmBone = {
   Head:          'head',
 };
 
-// animate
-const clock = new THREE.Clock();
-clock.start();
-
-// 在animate函数中替换原来的眨眼动画代码
+/**
+ * 主渲染循环函数
+ * 处理所有动画更新、VRM模型更新、VMC数据发送等
+ * 每帧调用一次，是整个应用的核心动画循环
+ */
 function animate() {
     requestAnimationFrame(animate);
     

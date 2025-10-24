@@ -4,6 +4,7 @@ from datetime import datetime
 import glob
 from io import BytesIO
 import os
+from os import mkdir
 from pathlib import Path
 import random
 import socket
