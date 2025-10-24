@@ -2496,6 +2496,21 @@ async def generate_stream_response(client,reasoner_client, request: ChatRequest,
                                     "content": drs_msg,
                                 }
                             )
+                # 在完整文本收集后，TTS之前处理动画指令
+                if full_content:
+                    logger.info(f"完整内容收集完成，开始处理动画指令: {full_content[:100]}...")
+                    animation_commands = parse_animation_commands(full_content)
+                    if animation_commands:
+                        logger.info(f"发现动画指令: {animation_commands}")
+                        await execute_animation_commands(animation_commands)
+                        # 清理动画标记，确保前端看不到逻辑信息
+                        cleaned_content = remove_animation_markers(full_content)
+                        logger.info(f"动画指令已执行，文本已清理: '{full_content[:50]}...' -> '{cleaned_content[:50]}...'")
+                        # 更新full_content为清理后的版本
+                        full_content = cleaned_content
+                    else:
+                        logger.info("未发现动画指令")
+                
                 yield "data: [DONE]\n\n"
                 if m0:
                     messages=[
@@ -4273,6 +4288,22 @@ class TTSConnectionManager:
             for conn in disconnected:
                 self.disconnect_main(conn)
     
+    async def send_to_vrm(self, message: dict):
+        """发送消息到VRM界面"""
+        if self.vrm_connections:
+            message_str = json.dumps(message)
+            disconnected = []
+            
+            for connection in self.vrm_connections:
+                try:
+                    await connection.send_text(message_str)
+                except:
+                    disconnected.append(connection)
+            
+            # 清理断开的连接
+            for conn in disconnected:
+                self.disconnect_vrm(conn)
+    
     def cache_audio(self, audio_id: str, audio_data: bytes):
         """缓存音频数据"""
         self.audio_cache[audio_id] = audio_data
@@ -4368,15 +4399,126 @@ async def vrm_websocket_endpoint(websocket: WebSocket):
         logging.error(f"WebSocket error in VRM connection: {e}")
         tts_manager.disconnect_vrm(websocket)
 
+@app.post("/vrm/play_animation")
+async def play_vrm_animation(animation_request: dict):
+    """播放VRM动画"""
+    try:
+        animation_name = animation_request.get("animation_name")
+        if not animation_name:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "animation_name is required"}
+            )
+        
+        # 发送到VRM界面
+        await tts_manager.send_to_vrm({
+            "type": "playAnimation",
+            "data": {
+                "animationName": animation_name
+            }
+        })
+        
+        return {
+            "success": True,
+            "message": f"Animation {animation_name} sent to VRM",
+            "animation_name": animation_name
+        }
+    except Exception as e:
+        logger.error(f"Error playing VRM animation: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
 
-@app.get("/tts/status")
-async def get_tts_status():
-    """获取当前TTS连接状态"""
-    return {
-        "main_connections": len(tts_manager.main_connections),
-        "vrm_connections": len(tts_manager.vrm_connections),
-        "total_connections": len(tts_manager.main_connections) + len(tts_manager.vrm_connections)
-    }
+
+def parse_animation_commands(text: str) -> List[Dict[str, Any]]:
+    """解析文本中的动画指令
+    
+    支持的格式：
+    - [ANIMATION:akimbo] 或 [动画:akimbo]
+    - [PLAY_ANIMATION:cool_side] 或 [播放动画:cool_side]
+    - {{animation:stretch}} 
+    - #ANIMATION(v_pose)
+    
+    返回动画指令列表
+    """
+
+    logger.info(f"start parsing animation commands: {text}")
+
+    animation_commands = []
+    
+    # 定义支持的动画名称
+    available_animations = [
+        'akimbo', 'cool_roll_show', 'cool_side', 'cute_jump_and_hello',
+        'play_fingers', 'roll_and_show', 'scratch_head', 'shoot_your_heart',
+        'squats', 'stretch', 'v_pose'
+    ]
+    
+    # 匹配模式1: [ANIMATION:name] 或 [动画:name]
+    pattern1 = r'\[(ANIMATION|动画|PLAY_ANIMATION|播放动画):([a-zA-Z_]+)\]'
+    matches1 = re.findall(pattern1, text, re.IGNORECASE)
+    for _, anim_name in matches1:
+        if anim_name.lower() in [anim.lower() for anim in available_animations]:
+            # 找到正确的大小写版本
+            correct_name = next(anim for anim in available_animations if anim.lower() == anim_name.lower())
+            animation_commands.append({
+                "type": "play_animation",
+                "animation_name": correct_name,
+                "original_text": f"[{matches1[0][0]}:{anim_name}]"
+            })
+    
+    # 匹配模式2: {{animation:name}} 
+    pattern2 = r'\{\{animation:([a-zA-Z_]+)\}\}'
+    matches2 = re.findall(pattern2, text, re.IGNORECASE)
+    for anim_name in matches2:
+        if anim_name.lower() in [anim.lower() for anim in available_animations]:
+            correct_name = next(anim for anim in available_animations if anim.lower() == anim_name.lower())
+            animation_commands.append({
+                "type": "play_animation", 
+                "animation_name": correct_name,
+                "original_text": f"{{{{animation:{anim_name}}}}}"
+            })
+    
+    # 匹配模式3: #ANIMATION(name)
+    pattern3 = r'#ANIMATION\(([a-zA-Z_]+)\)'
+    matches3 = re.findall(pattern3, text, re.IGNORECASE)
+    for anim_name in matches3:
+        if anim_name.lower() in [anim.lower() for anim in available_animations]:
+            correct_name = next(anim for anim in available_animations if anim.lower() == anim_name.lower())
+            animation_commands.append({
+                "type": "play_animation",
+                "animation_name": correct_name,
+                "original_text": f"#ANIMATION({anim_name})"
+            })
+    
+    return animation_commands
+
+async def execute_animation_commands(commands: List[Dict[str, Any]]):
+    """执行动画指令"""
+    for cmd in commands:
+        try:
+            if cmd["type"] == "play_animation":
+                await tts_manager.send_to_vrm({
+                    "type": "playAnimation",
+                    "data": {
+                        "animationName": cmd["animation_name"]
+                    }
+                })
+                logger.info(f"Executed animation command: {cmd['animation_name']}")
+                # 可以添加小延迟，让动画有时间播放
+                await asyncio.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Error executing animation command {cmd}: {e}")
+
+def remove_animation_markers(text: str) -> str:
+    """从文本中移除动画标记"""
+    # 移除各种格式的动画标记
+    text = re.sub(r'\[(ANIMATION|动画|PLAY_ANIMATION|播放动画):[a-zA-Z_]+\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\{\{animation:[a-zA-Z_]+\}\}', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'#ANIMATION\([a-zA-Z_]+\)', '', text, flags=re.IGNORECASE)
+    # 清理多余的空格
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 
 @app.post("/tts")
@@ -4386,6 +4528,12 @@ async def text_to_speech(request: Request):
         text = data['text']
         if text == "":
             return JSONResponse(status_code=400, content={"error": "Text is empty"})
+        
+        # 在TTS之前清理动画标记
+        original_text = text
+        text = remove_animation_markers(text)
+        if original_text != text:
+            logger.info(f"TTS文本已清理动画标记: '{original_text}' -> '{text}'")
         new_voice = data.get('voice','default')
         tts_settings = data['ttsSettings']
         if new_voice in tts_settings['newtts'] and new_voice!='default':
@@ -6499,5 +6647,5 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host=HOST,
-        port=PORT
+        port=PORT,
     )

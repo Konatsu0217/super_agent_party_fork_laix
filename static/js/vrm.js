@@ -367,6 +367,15 @@ class IdleAnimationManager {
         this.insertedAnimation = null; // 存储插入的动画
 
         this.isPlaying = false;
+        
+        // 定时任务相关属性
+        this.positionCheckInterval = null; // 位置检查定时器
+        this.lastAnimationEndTime = 0; // 上次动画结束时间
+        this.positionResetDelay = 5000; // 5秒后重置位置
+        this.isInDefaultPosition = true; // 是否处于默认位置
+        this.positionResetTimer = null; // 位置重置定时器
+        this.positionCheckIntervalTime = 30 * 1000; // 位置检查间隔（毫秒）
+        this.enableAutoPositionReset = true; // 是否启用自动位置重置
 
         // 创建默认姿势动作
         this.createDefaultPoseAction();
@@ -374,6 +383,9 @@ class IdleAnimationManager {
         this.createProceduralIdleAction();
 
         console.log('IdleAnimationManager initialized');
+        
+        // 启动位置检查定时任务
+        this.startPositionCheckTimer();
     }
 
     onPlay() {
@@ -619,6 +631,11 @@ class IdleAnimationManager {
         console.log('Starting VRMA idle animation loop');
         this.currentMode = 'vrma';
         this.isActive = true;
+        
+        // 重置位置检查状态
+        this.lastAnimationEndTime = Date.now();
+        this.isInDefaultPosition = false;
+        
         this.playNextVRMAAnimation();
     }
 
@@ -670,6 +687,10 @@ class IdleAnimationManager {
             return;
         }
 
+        // 重置位置检查状态
+        this.isInDefaultPosition = false;
+        this.lastAnimationEndTime = 0;
+
         try {
             // 创建VRM动画剪辑
             const clip = createVRMAnimationClip(animationData.animation, this.vrm);
@@ -712,6 +733,10 @@ class IdleAnimationManager {
         }
 
         console.log('VRMA animation finished, transitioning to default pose');
+        
+        // 记录动画结束时间，用于位置检查
+        this.lastAnimationEndTime = Date.now();
+        this.isInDefaultPosition = false;
 
         this.isTransitioning = true;
 
@@ -748,6 +773,7 @@ class IdleAnimationManager {
             setTimeout(() => {
                 if (this.currentMode !== 'vrma' || !this.isActive) {
                     this.isTransitioning = false;
+                    this.isInDefaultPosition = true; // 标记为默认位置
                     return;
                 }
 
@@ -757,6 +783,7 @@ class IdleAnimationManager {
                 }
 
                 this.isTransitioning = false;
+                this.isInDefaultPosition = true; // 标记为默认位置
                 this.isPlaying = false;
 
                 // 稍等片刻后播放下一个动画
@@ -773,9 +800,9 @@ class IdleAnimationManager {
                             this.insertedAnimation = null;
                         } else {
                             // 正常播放下一个动画，但检查是否有过渡中的插入动画
-                            if (!this.hasInsertedAnimation) {
-                                this.playNextVRMAAnimation();
-                            }
+                            // if (!this.hasInsertedAnimation) {
+                            //     this.playNextVRMAAnimation();
+                            // }
                         }
                     }
                 }, 300); // 300ms缓冲时间
@@ -791,6 +818,102 @@ class IdleAnimationManager {
             setTimeout(() => {
                 this.playNextVRMAAnimation();
             }, this.pauseBetweenAnimations * 1000);
+        }
+    }
+
+    // 启动位置检查定时任务
+    startPositionCheckTimer() {
+        if (this.positionCheckInterval) {
+            clearInterval(this.positionCheckInterval);
+        }
+        
+        this.positionCheckInterval = setInterval(() => {
+            this.checkAndResetPosition();
+        }, this.positionCheckIntervalTime); // 使用配置的间隔时间
+        
+        console.log('Position check timer started');
+    }
+
+    // 停止位置检查定时任务
+    stopPositionCheckTimer() {
+        if (this.positionCheckInterval) {
+            clearInterval(this.positionCheckInterval);
+            this.positionCheckInterval = null;
+        }
+        
+        if (this.positionResetTimer) {
+            clearTimeout(this.positionResetTimer);
+            this.positionResetTimer = null;
+        }
+        
+        console.log('Position check timer stopped');
+    }
+
+    // 检查并重置位置
+    checkAndResetPosition() {
+        if (!this.enableAutoPositionReset) {
+            return;
+        }
+        
+        const currentTime = Date.now();
+        const timeSinceLastAnimation = currentTime - this.lastAnimationEndTime;
+        
+        // 如果超过指定时间没有动画活动，且当前不在默认位置
+        if (timeSinceLastAnimation > this.positionResetDelay && 
+            !this.isInDefaultPosition && 
+            !this.isPlaying && 
+            !this.isTransitioning) {
+            
+            console.log(`No animation activity for ${this.positionResetDelay}ms, resetting to default position`);
+            this.resetToDefaultPosition();
+        }
+    }
+
+    // 重置到默认位置
+    resetToDefaultPosition() {
+        if (this.isPlaying || this.isTransitioning) {
+            console.log('Cannot reset position: animation in progress');
+            return;
+        }
+
+        console.log('Resetting VRM model to default position');
+        this.isInDefaultPosition = false;
+        this.isTransitioning = true;
+
+        // 停止所有当前动作
+        if (this.currentIdleAction) {
+            this.currentIdleAction.stop();
+            this.currentIdleAction = null;
+        }
+
+        // 播放默认姿势
+        if (this.defaultPoseAction) {
+            this.defaultPoseAction.reset();
+            this.defaultPoseAction.setEffectiveWeight(1.0);
+            this.defaultPoseAction.setLoop(THREE.LoopOnce);
+            this.defaultPoseAction.clampWhenFinished = true;
+            this.defaultPoseAction.play();
+
+            // 监听默认姿势完成
+            const onDefaultPoseFinished = (event) => {
+                if (event.action === this.defaultPoseAction) {
+                    console.log('Default position reset completed');
+                    this.isInDefaultPosition = true;
+                    this.isTransitioning = false;
+                    this.mixer.removeEventListener('finished', onDefaultPoseFinished);
+                    
+                    // 如果处于VRMA模式，继续正常流程
+                    if (this.currentMode === 'vrma' && this.isActive) {
+                        this.scheduleNextVRMAAnimation();
+                    }
+                }
+            };
+
+            this.mixer.addEventListener('finished', onDefaultPoseFinished);
+        } else {
+            console.warn('Default pose action not available');
+            this.isInDefaultPosition = true;
+            this.isTransitioning = false;
         }
     }
 
@@ -899,6 +1022,10 @@ class IdleAnimationManager {
 
         this.currentMode = 'procedural';
         this.isActive = true;
+        
+        // 重置位置检查状态
+        this.lastAnimationEndTime = Date.now();
+        this.isInDefaultPosition = true; // 程序化模式认为是在默认位置
 
         if (this.proceduralIdleAction) {
             console.log('Starting procedural idle animation...');
@@ -948,6 +1075,9 @@ class IdleAnimationManager {
         if (this.defaultPoseAction && this.defaultPoseAction.isRunning()) {
             this.defaultPoseAction.fadeOut(fadeTime);
         }
+        
+        // 停止位置检查定时任务
+        this.stopPositionCheckTimer();
     }
 
     // 只停止程序化动画的方法
@@ -990,6 +1120,9 @@ class IdleAnimationManager {
 
         this.isActive = false;
         this.isTransitioning = false;
+        
+        // 停止位置检查定时任务
+        this.stopPositionCheckTimer();
 
         const fadeTime = 0.5;
 
@@ -3588,6 +3721,26 @@ function handleTTSMessage(message) {
                 startLipSyncForChunk(data);
                 if (data.text) {
                     updateSubtitle(data.text, data.chunkIndex);
+                }
+            }
+            break;
+
+        case 'playAnimation':
+            console.log('收到播放动画指令:', data.animationName);
+            if (window.idleAnimationManager && window.idleAnimationManager.chooseAnimationToPlay) {
+                window.idleAnimationManager.chooseAnimationToPlay(data.animationName);
+            } else {
+                console.warn('IdleAnimationManager not available for animation:', data.animationName);
+            }
+            break;
+
+        case 'setAnimationMode':
+            console.log('收到设置动画模式指令:', data.mode);
+            if (window.idleAnimationManager) {
+                if (data.mode === 'vrma' && window.idleAnimationManager.switchToVRMAMode) {
+                    window.idleAnimationManager.switchToVRMAMode();
+                } else if (data.mode === 'procedural' && window.idleAnimationManager.switchToProceduralMode) {
+                    window.idleAnimationManager.switchToProceduralMode();
                 }
             }
             break;
