@@ -6392,8 +6392,6 @@ let vue_methods = {
       
       if (result.success) {
         this.danmu = []; // 清空弹幕数据
-        this.timeSlotDanmu = []; // 清空时间片弹幕数据
-        this.currentTimeSlot = null; // 重置时间片信息
         showNotification(result.message || this.t('live_stopped_successfully'));
       } else {
         showNotification(result.message || this.t('failed_to_stop_live'), 'error');
@@ -6466,197 +6464,10 @@ let vue_methods = {
       clearInterval(this.danmuProcessTimer);
     }
     
-    if (this.timeSlotProcessTimer) {
-      clearInterval(this.timeSlotProcessTimer);
-    }
-    
-    if (this.liveConfig.timeSlotEnabled) {
-      // 时间片模式：按照时间片长度启动定时器
-      this.startTimeSlotProcessor();
-    } else {
-      // 传统模式：每秒检查一次弹幕队列
-      this.danmuProcessTimer = setInterval(async () => {
-        await this.processDanmuQueue();
-      }, 1000);
-    }
-  },
-  
-  // 启动时间片处理器
-  startTimeSlotProcessor() {
-    console.log('启动时间片处理器');
-    
-    // 初始化当前时间片
-    this.currentTimeSlot = {
-      startTime: Date.now(),
-      danmuCount: 0,
-      currentDuration: this.getCurrentTimeSlotDuration(), // 获取当前时间片长度
-      lastAdaptTime: Date.now() // 上次调整时间
-    };
-    
-    // 根据模式启动不同的定时器
-    if (this.liveConfig.timeSlotMode === 'fixed') {
-      // 固定模式：使用固定时间片长度
-      this.timeSlotProcessTimer = setInterval(async () => {
-        await this.processTimeSlotDanmu();
-      }, this.liveConfig.timeSlotDuration * 1000);
-    } else {
-      // 动态/智能模式：使用动态时间片长度
-      this.startDynamicTimeSlotProcessor();
-    }
-  },
-  
-  // 获取当前时间片长度
-  getCurrentTimeSlotDuration() {
-    if (this.liveConfig.timeSlotMode === 'fixed') {
-      return this.liveConfig.timeSlotDuration;
-    } else if (this.liveConfig.timeSlotMode === 'dynamic') {
-      // 动态模式：根据弹幕密度调整
-      return this.calculateDynamicTimeSlotDuration();
-    } else if (this.liveConfig.timeSlotMode === 'smart') {
-      // 智能模式：更复杂的算法
-      return this.calculateSmartTimeSlotDuration();
-    }
-    return this.liveConfig.timeSlotDuration;
-  },
-  
-  // 计算动态时间片长度
-  calculateDynamicTimeSlotDuration() {
-    const currentDanmuCount = this.timeSlotDanmu.length;
-    const threshold = this.liveConfig.danmuDensityThreshold;
-    
-    if (currentDanmuCount >= threshold * 2) {
-      // 弹幕很多，缩短时间片
-      return Math.max(this.liveConfig.minTimeSlotDuration, this.liveConfig.timeSlotDuration * 0.5);
-    } else if (currentDanmuCount >= threshold) {
-      // 弹幕适中，保持默认
-      return this.liveConfig.timeSlotDuration;
-    } else {
-      // 弹幕较少，延长时间片
-      return Math.min(this.liveConfig.maxTimeSlotDuration, this.liveConfig.timeSlotDuration * 1.5);
-    }
-  },
-  
-  // 计算智能时间片长度
-  calculateSmartTimeSlotDuration() {
-    const currentDanmuCount = this.timeSlotDanmu.length;
-    const timeSinceLastAdapt = Date.now() - this.currentTimeSlot.lastAdaptTime;
-    const adaptInterval = this.liveConfig.timeSlotAdaptInterval * 1000;
-    
-    // 根据弹幕密度和上次调整时间综合计算
-    let baseDuration = this.liveConfig.timeSlotDuration;
-    
-    if (currentDanmuCount >= this.liveConfig.danmuDensityThreshold * 3) {
-      baseDuration = this.liveConfig.minTimeSlotDuration;
-    } else if (currentDanmuCount >= this.liveConfig.danmuDensityThreshold * 2) {
-      baseDuration = this.liveConfig.minTimeSlotDuration + 
-        (this.liveConfig.timeSlotDuration - this.liveConfig.minTimeSlotDuration) * 0.3;
-    } else if (currentDanmuCount >= this.liveConfig.danmuDensityThreshold) {
-      baseDuration = this.liveConfig.timeSlotDuration;
-    } else if (currentDanmuCount === 0 && timeSinceLastAdapt > adaptInterval) {
-      // 长时间没有弹幕，延长到最大值
-      baseDuration = this.liveConfig.maxTimeSlotDuration;
-    } else {
-      baseDuration = Math.min(this.liveConfig.maxTimeSlotDuration, 
-        this.liveConfig.timeSlotDuration * 1.2);
-    }
-    
-    return Math.round(baseDuration);
-  },
-  
-  // 启动动态时间片处理器
-  startDynamicTimeSlotProcessor() {
-    const processDynamicTimeSlot = async () => {
-      if (!this.isLiveRunning) return;
-      
-      // 检查是否需要处理当前时间片
-      const timeSinceStart = Date.now() - this.currentTimeSlot.startTime;
-      const currentDuration = this.currentTimeSlot.currentDuration;
-      
-      if (timeSinceStart >= currentDuration * 1000 || 
-          (this.liveConfig.timeSlotMode === 'dynamic' && this.timeSlotDanmu.length >= this.liveConfig.danmuDensityThreshold * 2) ||
-          (this.liveConfig.timeSlotMode === 'smart' && this.timeSlotDanmu.length >= this.liveConfig.danmuDensityThreshold * 3)) {
-        
-        await this.processTimeSlotDanmu();
-        
-        // 重置时间片
-        this.currentTimeSlot = {
-          startTime: Date.now(),
-          danmuCount: 0,
-          currentDuration: this.getCurrentTimeSlotDuration(),
-          lastAdaptTime: Date.now()
-        };
-      }
-    };
-    
-    // 使用较短的检查间隔（2秒）来实现动态调整
-    this.timeSlotProcessTimer = setInterval(processDynamicTimeSlot, 2000);
-  },
-  
-  // 处理时间片弹幕
-  async processTimeSlotDanmu() {
-    try {
-      if (!this.isLiveRunning || this.timeSlotDanmu.length === 0 || this.isTyping) {
-        return;
-      }
-      
-      const actualDuration = Math.round((Date.now() - this.currentTimeSlot.startTime) / 1000);
-      console.log(`处理时间片弹幕，共${this.timeSlotDanmu.length}条，实际时长：${actualDuration}秒`);
-      
-      // 构建时间片请求数据
-      const timeSlotStart = new Date(this.currentTimeSlot.startTime).toISOString();
-      const danmuList = this.timeSlotDanmu.reverse(); // 反转，让老的在前
-      
-      // 根据当前模式确定时间片长度
-      let timeSlotDuration = this.liveConfig.timeSlotDuration;
-      if (this.liveConfig.timeSlotMode !== 'fixed') {
-        timeSlotDuration = actualDuration; // 使用实际时长
-      }
-      
-      // 调用后端API分析时间片弹幕
-      const response = await fetch('/api/live/analyze-time-slot', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          danmu_list: danmuList,
-          time_slot_start: timeSlotStart,
-          time_slot_duration: timeSlotDuration,
-          model: this.mainAgent
-        })
-      });
-      
-      const result = await response.json();
-      
-      if (result.success && result.data.selected_danmu) {
-        const selectedDanmu = result.data.selected_danmu;
-        console.log(`选中弹幕: ${selectedDanmu.content}, 中心思想: ${result.data.central_theme}`);
-        
-        // 将选中的弹幕发送给LLM处理
-        this.userInput = selectedDanmu.content;
-        await this.sendMessage();
-        
-        // 清空已处理的弹幕
-        this.timeSlotDanmu = [];
-        
-        // 重置时间片
-        this.currentTimeSlot = {
-          startTime: Date.now(),
-          danmuCount: 0,
-          currentDuration: this.getCurrentTimeSlotDuration(),
-          lastAdaptTime: Date.now()
-        };
-      } else {
-        console.log('时间片弹幕分析失败:', result.message);
-        // 如果分析失败，清空弹幕避免堆积
-        this.timeSlotDanmu = [];
-      }
-      
-    } catch (error) {
-      console.error('处理时间片弹幕失败:', error);
-      // 出错时清空弹幕避免堆积
-      this.timeSlotDanmu = [];
-    }
+    // 每秒检查一次弹幕队列
+    this.danmuProcessTimer = setInterval(async () => {
+      await this.processDanmuQueue();
+    }, 1000);
   },
 
   // 停止弹幕处理器
@@ -6666,11 +6477,6 @@ let vue_methods = {
     if (this.danmuProcessTimer) {
       clearInterval(this.danmuProcessTimer);
       this.danmuProcessTimer = null;
-    }
-    
-    if (this.timeSlotProcessTimer) {
-      clearInterval(this.timeSlotProcessTimer);
-      this.timeSlotProcessTimer = null;
     }
     
     this.isProcessingDanmu = false;
@@ -6808,38 +6614,23 @@ let vue_methods = {
         timestamp: new Date().toLocaleTimeString('zh-CN', {
           timeZone: 'Asia/Shanghai',
           hour12: false
-        }),
-        receiveTime: Date.now() // 添加接收时间戳
+        })
       };
-      
-      // 根据是否启用时间片机制，选择不同的处理方式
-      if (this.liveConfig.timeSlotEnabled) {
-        // 时间片模式：将弹幕添加到时间片队列
-        this.timeSlotDanmu.unshift(danmuItem);
-        
-        // 保持时间片弹幕数量限制
-        if (this.timeSlotDanmu.length > this.liveConfig.maxDanmuPerSlot) {
-          this.timeSlotDanmu = this.timeSlotDanmu.slice(0, this.liveConfig.maxDanmuPerSlot);
-        }
-        
-        console.log('收到新弹幕（时间片模式）:', danmuItem.content, '当前时间片队列长度:', this.timeSlotDanmu.length);
-      } else {
-        // 传统模式：直接添加到弹幕队列
-        if (this.liveConfig.onlyDanmaku){
-          if (danmuItem.type === "danmaku" || danmuItem.type === "super_chat") {
-            this.danmu.unshift(danmuItem);
-          } 
-        }else {
+      if (this.liveConfig.onlyDanmaku){
+        if (danmuItem.type === "danmaku" || danmuItem.type === "super_chat") {
           this.danmu.unshift(danmuItem);
-        }
-        
-        // 保持数组长度不超过this.liveConfig.danmakuQueueLimit
-        if (this.danmu.length > this.liveConfig.danmakuQueueLimit) {
-          this.danmu = this.danmu.slice(0, this.liveConfig.danmakuQueueLimit);
-        }
-        
-        console.log('收到新弹幕（传统模式）:', danmuItem.content, '当前队列长度:', this.danmu.length);
+        } 
+      }else {
+        this.danmu.unshift(danmuItem);
       }
+      
+      
+      // 保持数组长度不超过this.liveConfig.danmakuQueueLimit
+      if (this.danmu.length > this.liveConfig.danmakuQueueLimit) {
+        this.danmu = this.danmu.slice(0, this.liveConfig.danmakuQueueLimit);
+      }
+      
+      console.log('收到新弹幕:', danmuItem.content, '当前队列长度:', this.length);
       
     } else if (data.type === 'error') {
       // 处理错误消息
