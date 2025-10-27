@@ -19,11 +19,7 @@
         "need_more_search":"需要更多搜索",
         "asyncToolsSetUP" : "异步工具已启动，ID为",
         "sendArg":"发送参数：",
-        "NoModelProvidersConfigured": "没有配置模型服务商",
-        "timeSlotConfig": "时间片配置",
-        "enableTimeSlot": "启用时间片机制",
-        "timeSlotDuration": "时间片长度",
-        "maxDanmuPerSlot": "每时间片最大弹幕数"
+        "NoModelProvidersConfigured": "没有配置模型服务商"
     },
     "en-US":{
         "web_search":"Searching the Internet, please wait...",
@@ -45,10 +41,6 @@
         "need_more_search":"Need more search",
         "asyncToolsSetUP" : "The asynchronous tool has started, with the ID",
         "sendArg":"Send parameters:",
-        "NoModelProvidersConfigured": "No model providers configured",
-        "timeSlotConfig": "Time Slot Configuration",
-        "enableTimeSlot": "Enable Time Slot Mechanism",
-        "timeSlotDuration": "Time Slot Duration",
-        "maxDanmuPerSlot": "Max Danmu per Slot"
+        "NoModelProvidersConfigured": "No model providers configured"
     }
 }
