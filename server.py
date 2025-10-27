@@ -1319,7 +1319,7 @@ async def generate_stream_response(client,reasoner_client, request: ChatRequest,
                                 "content": "",
                             }
                         )
-                        results = f"{response["name"]}工具已成功启动，获取结果需要花费很久的时间。请不要再次调用该工具，因为工具结果将生成后自动发送，再次调用也不能更快的获取到结果。请直接告诉用户，你会在获得结果后回答他的问题。"
+                        results = f"{response['name']}工具已成功启动，获取结果需要花费很久的时间。请不要再次调用该工具，因为工具结果将生成后自动发送，再次调用也不能更快的获取到结果。请直接告诉用户，你会在获得结果后回答他的问题。"
                         request.messages.insert(-1, 
                             {
                                 "role": "tool",
@@ -1964,7 +1964,7 @@ async def generate_stream_response(client,reasoner_client, request: ChatRequest,
                         modified_data = '[' + response_content.arguments.replace('}{', '},{') + ']'
                         # 使用json.loads来解析修改后的字符串为列表
                         data_list = json.loads(modified_data)
-                        modified_tool = f"{await t("sendArg")}{data_list[0]}"
+                        modified_tool = f"{await t('sendArg')}{data_list[0]}"
                         tool_call_chunk = {
                             "choices": [{
                                 "delta": {
@@ -6596,6 +6596,36 @@ async def websocket_endpoint(websocket: WebSocket):
             elif data.get("type") == "get_settings":
                 settings = await load_settings()
                 await websocket.send_json({"type": "settings", "data": settings})
+            elif data.get("type") == "danmaku":
+                # 处理模拟弹幕消息
+                username = data.get("username", "匿名用户")
+                message = data.get("message", "")
+                
+                if message:
+                    # 创建模拟的弹幕消息数据
+                    danmaku_data = {
+                        'type': 'message',
+                        'content': f'{username}发送弹幕：{message}',
+                        "danmu_type": "danmaku"
+                    }
+                    
+                    # 广播给所有连接的客户端
+                    await manager.broadcast(danmaku_data)
+                    
+                    # 发送成功响应给发送者
+                    await websocket.send_json({
+                        "type": "danmaku_response",
+                        "success": True,
+                        "message": "弹幕发送成功"
+                    })
+                    
+                    print(f"[模拟弹幕] {username}发送弹幕：{message}")
+                else:
+                    await websocket.send_json({
+                        "type": "danmaku_response",
+                        "success": False,
+                        "error": "弹幕内容不能为空"
+                    })
             elif data.get("type") == "save_agent":
                 current_settings = await load_settings()
                 
@@ -6638,6 +6668,18 @@ app.mount("/vrm", StaticFiles(directory=DEFAULT_VRM_DIR), name="vrm")
 app.mount("/tool_temp", StaticFiles(directory=TOOL_TEMP_DIR), name="vrm")
 app.mount("/uploaded_files", StaticFiles(directory=UPLOAD_FILES_DIR), name="uploaded_files")
 app.mount("/node_modules", StaticFiles(directory=os.path.join(base_path, "node_modules")), name="node_modules")
+# Mock弹幕发送页面路由
+@app.get("/MockSend")
+async def mock_send_page():
+    """提供模拟弹幕发送页面"""
+    html_path = os.path.join(base_path, "static", "MockSend.html")
+    if os.path.exists(html_path):
+        with open(html_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return Response(content=content, media_type="text/html")
+    else:
+        return Response("MockSend.html not found", status_code=404)
+
 app.mount("/", StaticFiles(directory=os.path.join(base_path, "static"), html=True), name="static")
 
 # 简化main函数

@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>模拟弹幕发送</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            width: 90%;
+            max-width: 600px;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        
+        .form-group {
+            margin-bottom: 25px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+            font-size: 16px;
+        }
+        
+        input, textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            background: #fafafa;
+        }
+        
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            background: white;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+            max-height: 200px;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+        }
+        
+        button {
+            flex: 1;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #666;
+            border: 2px solid #e0e0e0;
+        }
+        
+        .btn-secondary:hover {
+            background: #e8e8e8;
+            border-color: #d0d0d0;
+        }
+        
+        .status {
+            margin-top: 20px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+        
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .danmaku-preview {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .danmaku-preview h3 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        
+        .danmaku-content {
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #555;
+        }
+        
+        .connection-status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .connection-status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .connection-status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .connection-status.connecting {
+            background: #fff3cd;
+            color: #856404;
+        }
+    </style>
+</head>
+<body>
+    <div class="connection-status disconnected" id="connectionStatus">未连接</div>
+    
+    <div class="container">
+        <h1>🎬 模拟弹幕发送器</h1>
+        
+        <form id="danmakuForm">
+            <div class="form-group">
+                <label for="username">用户名</label>
+                <input type="text" id="username" name="username" placeholder="请输入用户名" value="测试用户" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="message">弹幕内容</label>
+                <textarea id="message" name="message" placeholder="请输入要发送的弹幕内容..." required></textarea>
+            </div>
+            
+            <div class="danmaku-preview" id="preview" style="display: none;">
+                <h3>预览</h3>
+                <div class="danmaku-content" id="previewContent"></div>
+            </div>
+            
+            <div class="button-group">
+                <button type="submit" class="btn-primary">发送弹幕</button>
+                <button type="button" class="btn-secondary" id="clearBtn">清空</button>
+            </div>
+        </form>
+        
+        <div id="status"></div>
+    </div>
+
+    <script>
+        class MockDanmakuSender {
+            constructor() {
+                this.ws = null;
+                this.reconnectInterval = 5000;
+                this.maxReconnectAttempts = 5;
+                this.reconnectAttempts = 0;
+                this.isConnecting = false;
+                
+                this.initElements();
+                this.initEventListeners();
+                this.connect();
+            }
+            
+            initElements() {
+                this.form = document.getElementById('danmakuForm');
+                this.usernameInput = document.getElementById('username');
+                this.messageInput = document.getElementById('message');
+                this.preview = document.getElementById('preview');
+                this.previewContent = document.getElementById('previewContent');
+                this.status = document.getElementById('status');
+                this.connectionStatus = document.getElementById('connectionStatus');
+                this.clearBtn = document.getElementById('clearBtn');
+            }
+            
+            initEventListeners() {
+                this.form.addEventListener('submit', (e) => this.handleSubmit(e));
+                this.clearBtn.addEventListener('click', () => this.clearForm());
+                this.usernameInput.addEventListener('input', () => this.updatePreview());
+                this.messageInput.addEventListener('input', () => this.updatePreview());
+                
+                // 监听Enter键发送，Shift+Enter换行
+                this.messageInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.handleSubmit(e);
+                    }
+                });
+            }
+            
+            connect() {
+                if (this.isConnecting || (this.ws && this.ws.readyState === WebSocket.OPEN)) {
+                    return;
+                }
+                
+                this.isConnecting = true;
+                this.updateConnectionStatus('connecting', '连接中...');
+                
+                try {
+                    // 连接到主服务器的WebSocket
+                    this.ws = new WebSocket(`ws://localhost:3456/ws`);
+                    
+                    this.ws.onopen = () => {
+                        console.log('WebSocket连接成功');
+                        this.isConnecting = false;
+                        this.reconnectAttempts = 0;
+                        this.updateConnectionStatus('connected', '已连接');
+                        this.showStatus('WebSocket连接成功', 'success');
+                    };
+                    
+                    this.ws.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            console.log('收到消息:', data);
+                            this.handleMessage(data);
+                        } catch (error) {
+                            console.error('解析消息失败:', error);
+                        }
+                    };
+                    
+                    this.ws.onclose = () => {
+                        console.log('WebSocket连接关闭');
+                        this.isConnecting = false;
+                        this.updateConnectionStatus('disconnected', '未连接');
+                        this.scheduleReconnect();
+                    };
+                    
+                    this.ws.onerror = (error) => {
+                        console.error('WebSocket错误:', error);
+                        this.isConnecting = false;
+                        this.updateConnectionStatus('disconnected', '连接错误');
+                        this.showStatus('WebSocket连接错误', 'error');
+                    };
+                    
+                } catch (error) {
+                    console.error('创建WebSocket失败:', error);
+                    this.isConnecting = false;
+                    this.updateConnectionStatus('disconnected', '连接失败');
+                    this.scheduleReconnect();
+                }
+            }
+            
+            handleMessage(data) {
+                // 处理收到的消息
+                if (data.type === 'danmaku_response') {
+                    if (data.success) {
+                        this.showStatus(`弹幕发送成功: ${data.message}`, 'success');
+                        this.clearForm();
+                    } else {
+                        this.showStatus(`弹幕发送失败: ${data.error}`, 'error');
+                    }
+                }
+            }
+            
+            async handleSubmit(e) {
+                e.preventDefault();
+                
+                if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                    this.showStatus('WebSocket未连接，请稍后再试', 'error');
+                    return;
+                }
+                
+                const username = this.usernameInput.value.trim();
+                const message = this.messageInput.value.trim();
+                
+                if (!username || !message) {
+                    this.showStatus('请填写用户名和弹幕内容', 'error');
+                    return;
+                }
+                
+                try {
+                    // 发送弹幕消息
+                    const danmakuData = {
+                        type: 'danmaku',
+                        username: username,
+                        message: message,
+                        timestamp: new Date().toISOString()
+                    };
+                    
+                    this.ws.send(JSON.stringify(danmakuData));
+                    console.log('发送弹幕:', danmakuData);
+                    
+                    this.showStatus('弹幕发送中...', 'info');
+                    
+                } catch (error) {
+                    console.error('发送弹幕失败:', error);
+                    this.showStatus('发送弹幕失败: ' + error.message, 'error');
+                }
+            }
+            
+            updatePreview() {
+                const username = this.usernameInput.value.trim();
+                const message = this.messageInput.value.trim();
+                
+                if (username && message) {
+                    this.preview.style.display = 'block';
+                    this.previewContent.textContent = `${username}发送弹幕：${message}`;
+                } else {
+                    this.preview.style.display = 'none';
+                }
+            }
+            
+            clearForm() {
+                this.messageInput.value = '';
+                this.preview.style.display = 'none';
+                this.messageInput.focus();
+            }
+            
+            showStatus(text, type) {
+                this.status.textContent = text;
+                this.status.className = `status ${type}`;
+                this.status.style.display = 'block';
+                
+                // 3秒后自动隐藏状态信息
+                setTimeout(() => {
+                    this.status.style.display = 'none';
+                }, 3000);
+            }
+            
+            updateConnectionStatus(status, text) {
+                this.connectionStatus.textContent = text;
+                this.connectionStatus.className = `connection-status ${status}`;
+            }
+            
+            scheduleReconnect() {
+                if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                    this.showStatus('重连失败，请刷新页面重试', 'error');
+                    return;
+                }
+                
+                this.reconnectAttempts++;
+                const delay = this.reconnectInterval * this.reconnectAttempts;
+                
+                console.log(`${delay/1000}秒后尝试第${this.reconnectAttempts}次重连...`);
+                this.updateConnectionStatus('connecting', `重连中(${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+                
+                setTimeout(() => {
+                    this.connect();
+                }, delay);
+            }
+            
+            disconnect() {
+                if (this.ws) {
+                    this.ws.close();
+                    this.ws = null;
+                }
+            }
+        }
+        
+        // 初始化应用
+        document.addEventListener('DOMContentLoaded', () => {
+            const sender = new MockDanmakuSender();
+            
+            // 页面卸载时断开连接
+            window.addEventListener('beforeunload', () => {
+                sender.disconnect();
+            });
+        });
+    </script>
+</body>
+</html>
