@@ -6488,108 +6488,13 @@ let vue_methods = {
     // 初始化当前时间片
     this.currentTimeSlot = {
       startTime: Date.now(),
-      danmuCount: 0,
-      currentDuration: this.getCurrentTimeSlotDuration(), // 获取当前时间片长度
-      lastAdaptTime: Date.now() // 上次调整时间
+      danmuCount: 0
     };
     
-    // 根据模式启动不同的定时器
-    if (this.liveConfig.timeSlotMode === 'fixed') {
-      // 固定模式：使用固定时间片长度
-      this.timeSlotProcessTimer = setInterval(async () => {
-        await this.processTimeSlotDanmu();
-      }, this.liveConfig.timeSlotDuration * 1000);
-    } else {
-      // 动态/智能模式：使用动态时间片长度
-      this.startDynamicTimeSlotProcessor();
-    }
-  },
-  
-  // 获取当前时间片长度
-  getCurrentTimeSlotDuration() {
-    if (this.liveConfig.timeSlotMode === 'fixed') {
-      return this.liveConfig.timeSlotDuration;
-    } else if (this.liveConfig.timeSlotMode === 'dynamic') {
-      // 动态模式：根据弹幕密度调整
-      return this.calculateDynamicTimeSlotDuration();
-    } else if (this.liveConfig.timeSlotMode === 'smart') {
-      // 智能模式：更复杂的算法
-      return this.calculateSmartTimeSlotDuration();
-    }
-    return this.liveConfig.timeSlotDuration;
-  },
-  
-  // 计算动态时间片长度
-  calculateDynamicTimeSlotDuration() {
-    const currentDanmuCount = this.timeSlotDanmu.length;
-    const threshold = this.liveConfig.danmuDensityThreshold;
-    
-    if (currentDanmuCount >= threshold * 2) {
-      // 弹幕很多，缩短时间片
-      return Math.max(this.liveConfig.minTimeSlotDuration, this.liveConfig.timeSlotDuration * 0.5);
-    } else if (currentDanmuCount >= threshold) {
-      // 弹幕适中，保持默认
-      return this.liveConfig.timeSlotDuration;
-    } else {
-      // 弹幕较少，延长时间片
-      return Math.min(this.liveConfig.maxTimeSlotDuration, this.liveConfig.timeSlotDuration * 1.5);
-    }
-  },
-  
-  // 计算智能时间片长度
-  calculateSmartTimeSlotDuration() {
-    const currentDanmuCount = this.timeSlotDanmu.length;
-    const timeSinceLastAdapt = Date.now() - this.currentTimeSlot.lastAdaptTime;
-    const adaptInterval = this.liveConfig.timeSlotAdaptInterval * 1000;
-    
-    // 根据弹幕密度和上次调整时间综合计算
-    let baseDuration = this.liveConfig.timeSlotDuration;
-    
-    if (currentDanmuCount >= this.liveConfig.danmuDensityThreshold * 3) {
-      baseDuration = this.liveConfig.minTimeSlotDuration;
-    } else if (currentDanmuCount >= this.liveConfig.danmuDensityThreshold * 2) {
-      baseDuration = this.liveConfig.minTimeSlotDuration + 
-        (this.liveConfig.timeSlotDuration - this.liveConfig.minTimeSlotDuration) * 0.3;
-    } else if (currentDanmuCount >= this.liveConfig.danmuDensityThreshold) {
-      baseDuration = this.liveConfig.timeSlotDuration;
-    } else if (currentDanmuCount === 0 && timeSinceLastAdapt > adaptInterval) {
-      // 长时间没有弹幕，延长到最大值
-      baseDuration = this.liveConfig.maxTimeSlotDuration;
-    } else {
-      baseDuration = Math.min(this.liveConfig.maxTimeSlotDuration, 
-        this.liveConfig.timeSlotDuration * 1.2);
-    }
-    
-    return Math.round(baseDuration);
-  },
-  
-  // 启动动态时间片处理器
-  startDynamicTimeSlotProcessor() {
-    const processDynamicTimeSlot = async () => {
-      if (!this.isLiveRunning) return;
-      
-      // 检查是否需要处理当前时间片
-      const timeSinceStart = Date.now() - this.currentTimeSlot.startTime;
-      const currentDuration = this.currentTimeSlot.currentDuration;
-      
-      if (timeSinceStart >= currentDuration * 1000 || 
-          (this.liveConfig.timeSlotMode === 'dynamic' && this.timeSlotDanmu.length >= this.liveConfig.danmuDensityThreshold * 2) ||
-          (this.liveConfig.timeSlotMode === 'smart' && this.timeSlotDanmu.length >= this.liveConfig.danmuDensityThreshold * 3)) {
-        
-        await this.processTimeSlotDanmu();
-        
-        // 重置时间片
-        this.currentTimeSlot = {
-          startTime: Date.now(),
-          danmuCount: 0,
-          currentDuration: this.getCurrentTimeSlotDuration(),
-          lastAdaptTime: Date.now()
-        };
-      }
-    };
-    
-    // 使用较短的检查间隔（2秒）来实现动态调整
-    this.timeSlotProcessTimer = setInterval(processDynamicTimeSlot, 2000);
+    // 按照时间片长度启动定时器
+    this.timeSlotProcessTimer = setInterval(async () => {
+      await this.processTimeSlotDanmu();
+    }, this.liveConfig.timeSlotDuration * 1000);
   },
   
   // 处理时间片弹幕
@@ -6599,18 +6504,11 @@ let vue_methods = {
         return;
       }
       
-      const actualDuration = Math.round((Date.now() - this.currentTimeSlot.startTime) / 1000);
-      console.log(`处理时间片弹幕，共${this.timeSlotDanmu.length}条，实际时长：${actualDuration}秒`);
+      console.log(`处理时间片弹幕，共${this.timeSlotDanmu.length}条`);
       
       // 构建时间片请求数据
       const timeSlotStart = new Date(this.currentTimeSlot.startTime).toISOString();
       const danmuList = this.timeSlotDanmu.reverse(); // 反转，让老的在前
-      
-      // 根据当前模式确定时间片长度
-      let timeSlotDuration = this.liveConfig.timeSlotDuration;
-      if (this.liveConfig.timeSlotMode !== 'fixed') {
-        timeSlotDuration = actualDuration; // 使用实际时长
-      }
       
       // 调用后端API分析时间片弹幕
       const response = await fetch('/api/live/analyze-time-slot', {
@@ -6621,7 +6519,7 @@ let vue_methods = {
         body: JSON.stringify({
           danmu_list: danmuList,
           time_slot_start: timeSlotStart,
-          time_slot_duration: timeSlotDuration,
+          time_slot_duration: this.liveConfig.timeSlotDuration,
           model: this.mainAgent
         })
       });
@@ -6642,9 +6540,7 @@ let vue_methods = {
         // 重置时间片
         this.currentTimeSlot = {
           startTime: Date.now(),
-          danmuCount: 0,
-          currentDuration: this.getCurrentTimeSlotDuration(),
-          lastAdaptTime: Date.now()
+          danmuCount: 0
         };
       } else {
         console.log('时间片分析失败:', result.message);
