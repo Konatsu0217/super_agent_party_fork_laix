@@ -52,7 +52,12 @@ class ConfigLoader:
                 'backlog': config_data['server']['backlog'],
                 'reload': config_data['server']['reload'],
                 'batch_size': config_data['queue']['batch_size'],
-                'empty_sleep_time': config_data['queue']['empty_sleep_time']
+                'empty_sleep_time': config_data['queue']['empty_sleep_time'],
+                # 主服务配置
+                'main_server_consume_url': config_data.get('main_server', {}).get('consume_url', 'http://localhost:3456/api/danmaku/consume'),
+                'main_server_timeout': config_data.get('main_server', {}).get('timeout', 5),
+                'main_server_max_retry_count': config_data.get('main_server', {}).get('max_retry_count', 3),
+                'main_server_retry_interval': config_data.get('main_server', {}).get('retry_interval', 1)
             }
             logger.info(f"配置加载成功: {cls._config}")
         except Exception as e:
@@ -72,7 +77,12 @@ class ConfigLoader:
                 'backlog': 2048,
                 'reload': True,
                 'batch_size': 100,
-                'empty_sleep_time': 0.01
+                'empty_sleep_time': 0.01,
+                # 主服务默认配置
+                'main_server_consume_url': 'http://localhost:3456/api/danmaku/consume',
+                'main_server_timeout': 5,
+                'main_server_max_retry_count': 3,
+                'main_server_retry_interval': 1
             }
             logger.warning(f"使用默认配置: {cls._config}")
 
@@ -254,6 +264,35 @@ class WebSocketManager:
 # 创建WebSocket管理器实例
 ws_manager = WebSocketManager()
 
+# 全局事件循环管理器
+class EventLoopManager:
+    def __init__(self):
+        self.loop = None
+        self._lock = threading.Lock()
+    
+    def get_loop(self):
+        """获取或创建事件循环"""
+        with self._lock:
+            if self.loop is None or self.loop.is_closed():
+                try:
+                    self.loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    self.loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(self.loop)
+            return self.loop
+    
+    def run_coroutine(self, coro):
+        """在线程中运行协程"""
+        loop = self.get_loop()
+        if loop.is_running():
+            # 如果循环已经在运行，创建任务
+            return asyncio.run_coroutine_threadsafe(coro, loop)
+        else:
+            # 如果循环没有运行，直接运行
+            return loop.run_until_complete(coro)
+
+event_loop_manager = EventLoopManager()
+
 
 # 修改process_danmaku_batch函数，保持将弹幕添加到TimeSliceRing但不合并
 async def process_danmaku_batch():
@@ -278,11 +317,11 @@ async def process_danmaku_batch():
         await asyncio.sleep(0)  # 让出控制权
 
 
-# 8. 定义消费函数
-def consume():
-    """消费过期的弹幕数据，会先检查远程服务是否允许消费，然后广播到前端"""
+# 8. 定义消费函数（异步版本）
+async def consume_async():
+    """异步消费过期的弹幕数据，会先检查远程服务是否允许消费，然后发送到主服务接口"""
     while True:
-        time.sleep(1)  # 每秒检查一次
+        await asyncio.sleep(1)  # 异步等待1秒
         current_time = time.time()
 
         # 检查远程服务是否允许消费
@@ -299,59 +338,138 @@ def consume():
                 if merged_danmaku:
                     print(f"Consuming merged danmaku at {datetime.datetime.now()}: {merged_danmaku}")
                     
-                    # 广播到所有WebSocket客户端
-                    broadcast_message = {
+                    # 发送到主服务的消费接口
+                    consume_message = {
                         'type': 'message',
-                        'content': merged_danmaku,
-                        'danmu_type': 'danmaku',
-                        'timestamp': datetime.datetime.now().isoformat()
+                        'content': merged_danmaku['content'],
+                        'danmu_type': merged_danmaku['danmu_type'],
+                        'timestamp': datetime.datetime.now().isoformat(),
+                        'count': merged_danmaku.get('count', 1)
                     }
                     
-                    # 将消息添加到广播队列，由异步任务处理
+                    # 异步发送到主服务
                     try:
-                        # 创建新的异步任务来广播消息
-                        asyncio.create_task(ws_manager.broadcast(broadcast_message))
+                        await send_to_main_server(consume_message)
+                        logger.info(f"成功发送到主服务: {consume_message}")
                     except Exception as e:
-                        logger.error(f"创建WebSocket广播任务失败: {e}")
+                        logger.error(f"发送到主服务失败: {e}", exc_info=True)
                     
                     # 清空已消费的弹幕
                     current.danmakus.clear()
             current = current.next
 
 
+# 保持同步版本用于线程
+def consume():
+    """同步消费函数，包装异步版本"""
+    try:
+        # 获取或创建事件循环
+        loop = None
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        if loop.is_running():
+            # 如果循环已经在运行，创建任务
+            asyncio.create_task(consume_async())
+        else:
+            # 如果循环没有运行，直接运行
+            loop.run_until_complete(consume_async())
+    except Exception as e:
+        logger.error(f"消费函数运行失败: {e}", exc_info=True)
+
+
 # 添加检查远程服务是否允许消费的函数
 def can_consume():
     """
-    检查远程服务是否允许消费弹幕
+    检查远程服务是否允许消费弹幕，请求主服务的/api/consumption-status接口
     返回: bool - True表示允许消费，False表示不允许消费
     """
     retry_count = 0
     while retry_count <= config['max_retry_count']:
         try:
-            # 发送GET请求到远程服务
+            # 发送GET请求到主服务的消费状态接口
             response = requests.get(
                 config['consume_check_url'],
-                timeout=config['consume_check_timeout']
+                timeout=config['consume_check_timeout'],
+                headers={'Content-Type': 'application/json'}
             )
 
             # 检查响应状态码
             if response.status_code == 200:
                 # 解析JSON响应
                 data = response.json()
-                # 假设远程服务返回的JSON包含一个'can_consume'布尔字段
-                return data.get('can_consume', False)
+                # 主服务返回的JSON包含'can_consume'布尔字段，基于isLLMWorking状态
+                can_consume_result = data.get('can_consume', False)
+                logger.info(f"主服务消费状态检查成功: can_consume={can_consume_result}")
+                return can_consume_result
             else:
-                logger.warning(f"Remote service returned non-200 status code: {response.status_code}")
+                logger.warning(f"主服务返回非200状态码: {response.status_code}")
                 retry_count += 1
                 time.sleep(config['retry_interval'])
         except requests.exceptions.RequestException as e:
             # 处理请求异常
-            logger.error(f"Error connecting to remote service: {str(e)}")
+            logger.error(f"连接主服务失败: {str(e)}")
+            retry_count += 1
+            time.sleep(config['retry_interval'])
+        except json.JSONDecodeError as e:
+            logger.error(f"解析主服务响应JSON失败: {str(e)}")
             retry_count += 1
             time.sleep(config['retry_interval'])
 
     # 重试次数耗尽，默认返回False表示不允许消费
-    logger.error(f"Failed to check consumption status after {config['max_retry_count']} retries")
+    logger.error(f"检查消费状态失败，重试{config['max_retry_count']}次后放弃")
+    return False
+
+
+# 新增：发送弹幕消息到主服务
+async def send_to_main_server(message: dict):
+    """
+    异步发送弹幕消息到主服务的消费接口，支持重试机制
+    """
+    retry_count = 0
+    max_retries = config['main_server_max_retry_count']
+    
+    while retry_count <= max_retries:
+        try:
+            # 主服务的消费接口URL
+            main_server_url = config['main_server_consume_url']
+            headers = {"Content-Type": "application/json"}
+            timeout = config['main_server_timeout']
+            
+            # 使用异步HTTP客户端发送请求
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    main_server_url, 
+                    json=message, 
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=timeout)
+                ) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        if result.get('success'):
+                            logger.info(f"弹幕消息成功发送到主服务: {message.get('content', '')[:50]}...")
+                            return True
+                        else:
+                            logger.error(f"主服务处理失败: {result.get('message', 'Unknown error')}")
+                            return False
+                    else:
+                        logger.error(f"主服务返回错误状态码: {response.status}")
+                        return False
+                        
+        except Exception as e:
+            retry_count += 1
+            if retry_count <= max_retries:
+                logger.warning(f"发送到主服务失败 (尝试 {retry_count}/{max_retries + 1}): {str(e)}")
+                await asyncio.sleep(config['main_server_retry_interval'])
+            else:
+                logger.error(f"发送到主服务失败，重试次数耗尽: {str(e)}", exc_info=True)
+                # 可以选择重试或记录失败的消息
+                raise e
+    
     return False
 
 
@@ -369,8 +487,8 @@ async def startup_event():
 @app.post("/danmaku/add_danmaku", summary="接收弹幕")
 async def receive_danmaku(data: DanmakuRequest = Body(...)):
     # 快速失败检查 - 减少不必要的处理
-    if data.type != "danmaku":
-        raise HTTPException(status_code=400, detail="只处理type为'danmaku'的消息")
+    if data.danmu_type != "danmaku":
+        raise HTTPException(status_code=400, detail="只处理danmu_type为'danmaku'的消息")
 
     # 构建弹幕数据 - 避免复杂计算
     danmaku_data = {
@@ -389,35 +507,55 @@ async def receive_danmaku(data: DanmakuRequest = Body(...)):
     }
 
 
+# 启动消费任务的函数
+async def start_consume_task():
+    """启动异步消费任务"""
+    try:
+        logger.info("启动弹幕消费任务")
+        await consume_async()
+    except Exception as e:
+        logger.error(f"消费任务启动失败: {e}", exc_info=True)
+
+
 # WebSocket端点
 @app.websocket("/ws/danmaku")
 async def websocket_endpoint(websocket):
     """WebSocket连接端点，用于接收弹幕消息"""
-    await ws_manager.connect(websocket)
+    logger.info(f"收到WebSocket连接请求，客户端: {websocket.client}")
     try:
+        await websocket.accept()  # 接受WebSocket连接
+        logger.info("WebSocket连接已接受")
+        await ws_manager.connect(websocket)
+        logger.info(f"WebSocket客户端已添加到管理器，当前连接数: {len(ws_manager.connections)}")
+        
         while True:
             # 保持连接活跃，接收客户端消息（可选）
             data = await websocket.receive_text()
+            logger.info(f"收到WebSocket消息: {data}")
             # 可以处理客户端发送的消息，这里只是保持连接
+            
     except websockets.exceptions.ConnectionClosed:
-        pass
+        logger.info("WebSocket连接已关闭")
+    except Exception as e:
+        logger.error(f"WebSocket连接错误: {e}", exc_info=True)
     finally:
         await ws_manager.disconnect(websocket)
+        logger.info(f"WebSocket客户端已断开，剩余连接数: {len(ws_manager.connections)}")
 
 
 # 11. 启动服务的入口
 if __name__ == "__main__":
 
     # ============== 这里是可消费模拟服务，上线去除 ======================
-    import mock_service_simple as mock_service
-    
-    # 创建并启动一个线程来运行模拟服务
-    mock_thread = threading.Thread(
-        target=mock_service.run_server,
-        args=(2345,),
-        daemon=True
-    )
-    mock_thread.start()
+    # import mock_service_simple as mock_service
+    #
+    # # 创建并启动一个线程来运行模拟服务
+    # mock_thread = threading.Thread(
+    #     target=mock_service.run_server,
+    #     args=(2345,),
+    #     daemon=True
+    # )
+    # mock_thread.start()
     # ============== 这里是可消费模拟服务，上线去除 ======================
 
     # 计算工作进程数
@@ -426,13 +564,26 @@ if __name__ == "__main__":
     else:
         workers = int(config['workers'])
     
-    # 启动uvicorn服务
-    uvicorn.run(
-        "danmaku_proxy:app",
-        host="127.0.0.1",
-        port=config['port'],
-        reload=config['reload'],
-        workers=workers,
-        limit_concurrency=config['limit_concurrency'],
-        backlog=config['backlog']
-    )
+    # 启动异步任务
+    async def main():
+        """主异步函数"""
+        # 启动消费任务
+        consume_task = asyncio.create_task(consume_async())
+        logger.info("弹幕消费任务已启动")
+        
+        # 启动uvicorn服务
+        uvicorn_config = uvicorn.Config(
+            "danmaku_proxy:app",
+            host="0.0.0.0",  # 允许所有IP连接
+            port=config['port'],
+            reload=config['reload'],
+            workers=1,  # 使用单进程模式便于调试
+            limit_concurrency=config['limit_concurrency'],
+            backlog=config['backlog'],
+            log_level="info"
+        )
+        server = uvicorn.Server(uvicorn_config)
+        await server.serve()
+    
+    # 运行主异步函数
+    asyncio.run(main())

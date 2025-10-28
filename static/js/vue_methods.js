@@ -6521,7 +6521,14 @@ let vue_methods = {
         console.log('处理弹幕:', oldestDanmu.content);
         
         // 将弹幕内容赋值到用户输入
-        this.userInput = oldestDanmu.content;
+        this.userInput = "你是一个直播间的智能主播，正在面对快速滚动的弹幕流。你不必回复每一条弹幕，而是需要：\n" +
+            "1. 识别重复出现或讨论集中的话题点\n" +
+            "例如：“666”、 “主播带带我”、“学到了”、“这游戏不错”、“这波什么水平”等；\n" +
+            "2. 注意不同用户发送的相似内容，归纳为同一类话题。\n" +
+            "3. 只对主要话题进行简短回应，一次回应可以覆盖多个相似弹幕的意图。\n" +
+            "4. 回应应简洁、自然，像真人主播随口接话；\n" +
+            "5. 忽略个别无关或低频内容\n" +
+            "6. 如果某条弹幕内容在当前时间段没有形成话题，则忽略：\n" + oldestDanmu.content;
         
         // 发送消息
         await this.sendMessage();
@@ -6545,8 +6552,7 @@ let vue_methods = {
     try {
       // 根据当前协议选择ws或wss
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      // 修改：连接到danmaku_proxy服务器的WebSocket端点
-      const wsUrl = `${protocol}//${window.location.hostname}:25535/ws/danmaku`;
+      const wsUrl = `${protocol}//${window.location.host}/ws/live/danmu`;
       
       this.bilibiliWs = new WebSocket(wsUrl);
       

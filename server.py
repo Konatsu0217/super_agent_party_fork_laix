@@ -38,7 +38,7 @@ import logging
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from openai import AsyncOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import status
 from fastapi.responses import JSONResponse, StreamingResponse,Response
 import uuid
@@ -60,6 +60,30 @@ from py.llm_tool import get_image_base64,get_image_media_type
 
 timetamp = time.time()
 log_path = os.path.join(LOG_DIR, f"backend_{timetamp}.log")
+
+can_consume = True   # 初始状态）
+
+# 极简TTS状态跟踪器 - 只跟踪TTS播放状态
+class TTSStateTracker:
+    def __init__(self):
+        self.tts_playing = False  # TTS是否正在播放
+        
+    def set_tts_playing(self, playing=True):
+        """设置TTS播放状态"""
+        global can_consume
+        self.tts_playing = playing
+        can_consume = not playing  # TTS播放时不能消费弹幕
+        logger.info(f"🎙️ TTS状态: {'播放中' if playing else '已停止'}, 弹幕消费: {'暂停' if playing else '允许'}")
+            
+    def get_status(self):
+        """获取当前状态"""
+        return {
+            "tts_playing": self.tts_playing,
+            "can_consume": not self.tts_playing
+        }
+
+# 创建全局TTS状态跟踪器实例
+tts_tracker = TTSStateTracker()
 
 logger = None
 
@@ -146,6 +170,7 @@ async def lifespan(app: FastAPI):
     from tzlocal import get_localzone
     local_timezone = get_localzone()
     settings = await load_settings()
+
     vendor = 'OpenAI'
     for modelProvider in settings['modelProviders']: 
         if modelProvider['id'] == settings['selectedProvider']:
@@ -3598,6 +3623,29 @@ async def fetch_provider_models(request: ProviderModelRequest):
         # 处理异常，返回错误信息
         raise HTTPException(status_code=500, detail=str(e))
 
+def onStartCallLLM():
+    global can_consume
+    can_consume = False  # LLM正在工作，不能消费弹幕
+    logger.info("🤖 LLM开始工作，暂停弹幕消费")
+
+def onEndCallLLM():
+    """LLM回复内容生成完成"""
+    logger.info("📝 LLM回复内容生成完成，等待TTS播放完成...")
+
+@app.get("/api/consumption-status")
+def isLLMWorking():
+    """获取当前是否可以消费弹幕 - 现在只基于TTS播放状态"""
+    return {"can_consume": can_consume}
+
+@app.get("/api/tts-status")
+def get_tts_status():
+    """获取TTS播放状态的详细信息"""
+    status = tts_tracker.get_status()
+    return {
+        "can_consume": status["can_consume"],
+        "tts_playing": status["tts_playing"]
+    }
+
 @app.post("/v1/chat/completions", operation_id="chat_with_agent_party")
 async def chat_endpoint(request: ChatRequest,fastapi_request: Request):
     """
@@ -3609,6 +3657,7 @@ async def chat_endpoint(request: ChatRequest,fastapi_request: Request):
     enable_deep_research: 默认为False，是否启用深度研究模式
     enable_web_search: 默认为False，是否启用网络搜索
     """
+    onStartCallLLM()
     fastapi_base_url = str(fastapi_request.base_url)
     global client, settings,reasoner_client,mcp_client_list
     model = request.model or 'super-model' # 默认使用 'super-model'
@@ -4388,12 +4437,23 @@ async def vrm_websocket_endpoint(websocket: WebSocket):
                         }
                     }))
             
-            # 可以处理VRM发送的状态信息
+            # 处理TTS播放完成事件 - 关键事件：所有音频块播放完成
             elif message['type'] == 'animationComplete':
-                await tts_manager.send_to_main({
-                    'type': 'vrmAnimationComplete',
-                    'data': message['data']
-                })
+                # TTS所有音频块播放完成，更新状态为可消费弹幕
+                tts_tracker.set_tts_playing(False)
+                logger.info("🔊 TTS播放完成，可以消费弹幕")
+            
+            # 处理TTS开始播放事件 - 关键事件：开始播放
+            elif message['type'] == 'ttsStarted':
+                # TTS开始播放，设置为播放中状态，暂停弹幕消费
+                tts_tracker.set_tts_playing(True)
+                logger.info("🎙️ TTS开始播放，暂停弹幕消费")
+            
+            # 处理TTS停止说话事件 - 关键事件：用户打断
+            elif message['type'] == 'stopSpeaking':
+                # TTS停止说话，设置为非播放状态，立即可以消费弹幕
+                tts_tracker.set_tts_playing(False)
+                logger.info("⏹️ TTS停止说话，可以消费弹幕")
             
     except WebSocketDisconnect:
         tts_manager.disconnect_vrm(websocket)
@@ -6032,6 +6092,10 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# 弹幕代理服务进程管理
+danmaku_proxy_process = None
+danmaku_proxy_pid = None
+
 # API路由
 @app.post("/api/live/start", response_model=ApiResponse)
 async def start_live(request: LiveConfigRequest):
@@ -6151,6 +6215,53 @@ async def reload_live(request: LiveConfigRequest):
         return await start_live(request)
     except Exception as e:
         return ApiResponse(success=False, message=f"重载失败: {str(e)}")
+
+
+# 新增：接收弹幕代理服务发送的弹幕消息
+class DanmakuData(BaseModel):
+    type: str = Field(..., description="消息类型")
+    content: str = Field(..., description="弹幕内容")
+    danmu_type: str = Field(..., description="弹幕类型")
+    timestamp: Optional[str] = Field(None, description="时间戳")
+    count: Optional[int] = Field(1, description="弹幕数量")
+
+@app.post("/api/danmaku/consume")
+async def consume_danmaku(data: DanmakuData):
+    """接收弹幕代理服务发送的待消费弹幕消息，并广播到直播WebSocket客户端"""
+    try:
+        print(f"[弹幕消费] 接收到弹幕消息: {data.content}")
+        logger.info(f"[弹幕消费] 接收到弹幕消息: {data.content}")
+        
+        # 构建广播消息
+        broadcast_message = {
+            'type': data.type,
+            'content': data.content,
+            'danmu_type': data.danmu_type,
+            'timestamp': data.timestamp or datetime.now().isoformat(),
+            'count': data.count or 1
+        }
+        
+        # 广播到直播WebSocket客户端 (/ws/live/danmu)
+        # 使用 manager.broadcast 发送到直播弹幕连接
+        await manager.broadcast(broadcast_message)
+        
+        client_count = len(manager.active_connections)
+        print(f"[弹幕消费] 成功广播弹幕消息到 {client_count} 个直播客户端: {data.content}")
+        logger.info(f"[弹幕消费] 成功广播弹幕消息到 {client_count} 个直播客户端: {data.content}")
+        
+        return {
+            "success": True,
+            "message": f"弹幕消息已广播到 {client_count} 个直播客户端",
+            "client_count": client_count
+        }
+    except Exception as e:
+        error_msg = f"广播弹幕消息失败: {str(e)}"
+        print(f"[弹幕消费] {error_msg}")
+        logger.error(f"[弹幕消费] {error_msg}", exc_info=True)
+        return {
+            "success": False,
+            "message": error_msg
+        }
 
 # WebSocket路由
 @app.websocket("/ws/live/danmu")
@@ -6285,6 +6396,25 @@ async def start_live_client(config: dict):
                 print(f"关闭Session时出错: {e}")
 
 
+async def _forward_to_danmaku_proxy(data):
+    """将弹幕消息转发到danmaku_proxy服务器"""
+    try:
+        # 构建转发请求
+        proxy_url = "http://localhost:25535/danmaku/add_danmaku"
+        headers = {"Content-Type": "application/json"}
+
+        # 发送POST请求到弹幕代理服务器
+        response = requests.post(proxy_url, json=data, headers=headers, timeout=5)
+
+        if response.status_code == 200:
+            print(f"成功转发弹幕到代理服务器: {data['content']}")
+        else:
+            print(f"转发弹幕到代理服务器失败: {response.status_code} - {response.text}")
+
+    except Exception as e:
+        print(f"转发弹幕到代理服务器时出错: {e}")
+
+
 class WebSocketHandler(blivedm.BaseHandler):
     """Web类型WebSocket处理器"""
     
@@ -6299,8 +6429,9 @@ class WebSocketHandler(blivedm.BaseHandler):
             "danmu_type": "danmaku"
         }
         print(msg_text)
+        logger.info(f"收到弹幕: {msg_text} 准备转发")
         # 修改：转发到danmaku_proxy_server，不再直接广播到前端
-        asyncio.create_task(self._forward_to_danmaku_proxy(data))
+        asyncio.create_task(_forward_to_danmaku_proxy(data))
     
     def _on_gift(self, client: blivedm.BLiveClient, message: web_models.GiftMessage):
         msg_text = f'{message.uname} 赠送{message.gift_name}x{message.num} （{message.coin_type}瓜子x{message.total_coin}）'
@@ -6321,25 +6452,7 @@ class WebSocketHandler(blivedm.BaseHandler):
         }
         print(msg_text)
         asyncio.create_task(manager.broadcast(data))
-    
-    async def _forward_to_danmaku_proxy(self, data):
-        """将弹幕消息转发到danmaku_proxy服务器"""
-        try:
-            # 构建转发请求
-            proxy_url = "http://localhost:25535/danmaku/add_danmaku"
-            headers = {"Content-Type": "application/json"}
-            
-            # 发送POST请求到弹幕代理服务器
-            response = requests.post(proxy_url, json=data, headers=headers, timeout=5)
-            
-            if response.status_code == 200:
-                print(f"成功转发弹幕到代理服务器: {data['content']}")
-            else:
-                print(f"转发弹幕到代理服务器失败: {response.status_code} - {response.text}")
-                
-        except Exception as e:
-            print(f"转发弹幕到代理服务器时出错: {e}")
-    
+
     def _on_super_chat(self, client: blivedm.BLiveClient, message: web_models.SuperChatMessage):
         msg_text = f'{message.uname}发送醒目留言：{message.message}'
         data = {
@@ -6385,6 +6498,7 @@ class OpenLiveWebSocketHandler(blivedm.BaseHandler):
             "danmu_type": "danmaku"
         }
         print(msg_text)
+        logger.info(f"收到弹幕: {msg_text} 准备转发")
         # 修改：转发到danmaku_proxy_server，不再直接广播到前端
         asyncio.create_task(self._forward_to_danmaku_proxy(data))
 
@@ -6499,7 +6613,21 @@ async def websocket_endpoint(websocket: WebSocket):
             if data.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
             elif data.get("type") == "save_settings":
-                await save_settings(data.get("data", {}))
+                new_settings = data.get("data", {})
+                await save_settings(new_settings)
+                
+                # 更新状态跟踪器中的TTS/VRM启用状态
+                if 'ttsSettings' in new_settings:
+                    tts_enabled = new_settings['ttsSettings'].get('enabled', False)
+                    logger.info(f"🎙️ TTS启用状态更新: {tts_enabled}")
+                    
+                if 'VRMConfig' in new_settings:
+                    vrm_enabled = new_settings['VRMConfig'].get('enabled', False)
+                    logger.info(f"🎭 VRM启用状态更新: {vrm_enabled}")
+                
+                # 更新全局settings变量
+                settings = new_settings
+                
                 # 发送确认消息（携带相同 correlationId）
                 await websocket.send_json({
                     "type": "settings_saved",
@@ -6522,8 +6650,33 @@ async def websocket_endpoint(websocket: WebSocket):
                         "danmu_type": "danmaku"
                     }
                     
-                    # 广播给所有连接的客户端
-                    await manager.broadcast(danmaku_data)
+                    # 检查弹幕代理服务是否启用，如果启用则转发到代理服务
+                    settings = await load_settings()
+                    if True :
+                    # if settings.get('liveConfig', {}).get('danmakuProxyEnabled', False):
+                        # 转发到danmaku_proxy服务
+                        try:
+                            proxy_url = "http://localhost:25535/danmaku/add_danmaku"
+                            headers = {"Content-Type": "application/json"}
+                            
+                            # 发送POST请求到弹幕代理服务器
+                            response = requests.post(proxy_url, json=danmaku_data, headers=headers, timeout=5)
+                            
+                            if response.status_code == 200:
+                                print(f"[模拟弹幕] 成功转发到代理服务器: {username}发送弹幕：{message}")
+                                logger.info(f"[模拟弹幕] 成功转发到代理服务器: {username}发送弹幕：{message}")
+                            else:
+                                print(f"[模拟弹幕] 转发到代理服务器失败: {response.status_code} - {response.text}")
+                                logger.error(f"[模拟弹幕] 转发到代理服务器失败: {response.status_code} - {response.text}")
+                                # 如果代理服务失败，仍然广播给客户端
+                                await manager.broadcast(danmaku_data)
+                        except Exception as e:
+                            logger.error(f"[模拟弹幕] 转发到代理服务器时出错: {e}", exc_info=True)
+                            # 如果代理服务不可用，仍然广播给客户端
+                            await manager.broadcast(danmaku_data)
+                    else:
+                        # 弹幕代理服务未启用，直接广播给客户端
+                        await manager.broadcast(danmaku_data)
                     
                     # 发送成功响应给发送者
                     await websocket.send_json({

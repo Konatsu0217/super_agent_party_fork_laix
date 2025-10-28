@@ -12,7 +12,7 @@
     "ring_size": 4
   },
   "consumption": {
-    "check_url": "http://localhost:2345/api/consumption-status",
+    "check_url": "http://localhost:3456/api/consumption-status",
     "check_timeout": 5,
     "max_retry_count": 99,
     "retry_interval": 1
@@ -20,5 +20,11 @@
   "queue": {
     "batch_size": 100,
     "empty_sleep_time": 0.01
+  },
+  "main_server": {
+    "consume_url": "http://localhost:3456/api/danmaku/consume",
+    "timeout": 5,
+    "max_retry_count": 3,
+    "retry_interval": 1
   }
 }

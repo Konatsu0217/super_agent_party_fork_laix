@@ -189,6 +189,54 @@
             background: #fff3cd;
             color: #856404;
         }
+        
+        /* 批量发送控制区域样式 */
+        .batch-control {
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 2px solid #e0e0e0;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-radius: 15px;
+            padding: 25px;
+            margin: 30px -25px -25px -25px;
+        }
+        
+        .batch-title {
+            color: #495057;
+            margin-bottom: 20px;
+            font-size: 20px;
+            font-weight: 600;
+            text-align: center;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        
+        .batch-stats {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: rgba(255,255,255,0.7);
+            border-radius: 8px;
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
     </style>
 </head>
 <body>
@@ -219,10 +267,204 @@
             </div>
         </form>
         
+        <!-- 批量发送控制区域 -->
+        <div class="batch-control">
+            <h2 class="batch-title">🚀 批量弹幕发送</h2>
+            
+            <div class="form-group">
+                <label for="batchTopic">话题类型</label>
+                <select id="batchTopic" name="batchTopic">
+                    <option value="gaming">🎮 游戏相关</option>
+                    <option value="food">🍔 美食相关</option>
+                    <option value="study">📚 学习相关</option>
+                    <option value="emotion">😂 情绪表达</option>
+                    <option value="symbols">❤️ 符号表情</option>
+                    <option value="simple">👍 简单词汇</option>
+                    <option value="spam">🔢 重复刷屏</option>
+                    <option value="interaction">💬 互动类</option>
+                    <option value="question">❓ 质疑类</option>
+                    <option value="mixed">🎲 混合类型</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="batchCount">发送数量</label>
+                <input type="number" id="batchCount" name="batchCount" value="50" min="1" max="1000" required>
+                <small style="color: #666;">建议: 50-200条模拟真实直播间</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="batchInterval">发送间隔 (毫秒)</label>
+                <input type="number" id="batchInterval" name="batchInterval" value="100" min="10" max="5000" required>
+                <small style="color: #666;">建议: 50-500ms，越小越密集</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="batchUsername">批量用户名模式</label>
+                <select id="batchUsername" name="batchUsername">
+                    <option value="random">🎲 随机生成</option>
+                    <option value="fixed">📛 固定用户名</option>
+                    <option value="numbered">🔢 编号用户</option>
+                </select>
+            </div>
+            
+            <div class="form-group" id="fixedUsernameGroup" style="display: none;">
+                <label for="fixedUsername">固定用户名</label>
+                <input type="text" id="fixedUsername" name="fixedUsername" placeholder="请输入固定用户名">
+            </div>
+            
+            <div class="button-group">
+                <button type="button" class="btn-primary" id="startBatchBtn">🚀 开始批量发送</button>
+                <button type="button" class="btn-secondary" id="stopBatchBtn" disabled>⏹️ 停止发送</button>
+            </div>
+            
+            <!-- 进度条和统计信息 -->
+            <div id="batchProgress" style="display: none;">
+                <div class="batch-stats">
+                    <span id="batchProgressText">准备开始...</span>
+                    <span id="batchSpeedText">速度: 0条/秒</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+            </div>
+            
+            <div id="batchStatus"></div>
+        </div>
+        
         <div id="status"></div>
     </div>
 
     <script>
+        // 预制弹幕内容库
+        const DANMAKU_TEMPLATES = {
+            // 话题相关弹幕 - 游戏类
+            gaming: [
+                "主播这操作666啊！",
+                "这波什么水平？",
+                "666666666",
+                "主播技术可以的",
+                "学到了学到了",
+                "原来还能这样玩",
+                "主播带带我！",
+                "这游戏看起来不错",
+                "多少钱买的？",
+                "主播用的是什么配置？"
+            ],
+            
+            // 话题相关弹幕 - 美食类
+            food: [
+                "看起来好好吃啊！",
+                "口水都流出来了",
+                "主播做的这个我也想试试",
+                "这个食材哪里买的？",
+                "调料配比是多少？",
+                "火候怎么掌握？",
+                "主播是专业厨师吗？",
+                "这道菜叫什么名字？",
+                "看起来很简单我也想学",
+                "有什么可以替代的材料吗？"
+            ],
+            
+            // 话题相关弹幕 - 学习类
+            study: [
+                "这个知识点讲得好清楚",
+                "终于理解了！",
+                "老师能再讲一遍吗？",
+                "这个和那个有什么区别？",
+                "有什么推荐的书籍吗？",
+                "考试会考这个吗？",
+                "这个公式怎么推导的？",
+                "实际应用中怎么用？",
+                "有没有更简单的方法？",
+                "这个理论是谁提出的？"
+            ],
+            
+            // 无核心思想弹幕 - 纯情绪表达
+            emotion: [
+                "哈哈哈哈哈哈哈",
+                "呜呜呜呜呜",
+                "啊啊啊啊啊啊",
+                "哦哦哦哦哦",
+                "嗯嗯嗯嗯嗯",
+                "嘿嘿嘿",
+                "呵呵呵",
+                "哇哇哇",
+                "呀呀呀",
+                "啦啦啦"
+            ],
+            
+            // 无核心思想弹幕 - 符号表情
+            symbols: [
+                "🌹🌹🌹",
+                "❤️❤️❤️",
+                "👍👍👍",
+                "😂😂😂",
+                "🔥🔥🔥",
+                "✨✨✨",
+                "💕💕💕",
+                "🎉🎉🎉",
+                "😍😍😍",
+                "🙈🙈🙈"
+            ],
+            
+            // 无核心思想弹幕 - 简单词汇
+            simple: [
+                "好",
+                "可以",
+                "不错",
+                "厉害",
+                "牛",
+                "棒",
+                "赞",
+                "强",
+                "秀",
+                "稳"
+            ],
+            
+            // 无核心思想弹幕 - 重复刷屏
+            spam: [
+                "111111111",
+                "222222222",
+                "333333333",
+                "444444444",
+                "555555555",
+                "666666666",
+                "777777777",
+                "888888888",
+                "999999999",
+                "000000000"
+            ],
+            
+            // 互动类弹幕
+            interaction: [
+                "主播看到我了吗？",
+                "有人吗有人吗？",
+                "前排前排！",
+                "打卡打卡",
+                "来了来了",
+                "晚上好",
+                "主播辛苦了",
+                "支持支持",
+                "关注了关注了",
+                "已点赞已分享"
+            ],
+            
+            // 质疑类弹幕
+            question: [
+                "真的假的？",
+                "确定吗？",
+                "不会吧？",
+                "这样行吗？",
+                "靠谱吗？",
+                "有用吗？",
+                "能成功吗？",
+                "这么简单？",
+                "不可能吧？",
+                "你确定？"
+            ]
+        };
+
         class MockDanmakuSender {
             constructor() {
                 this.ws = null;
@@ -230,6 +472,12 @@
                 this.maxReconnectAttempts = 5;
                 this.reconnectAttempts = 0;
                 this.isConnecting = false;
+                
+                // 批量发送相关属性
+                this.isBatchSending = false;
+                this.batchInterval = null;
+                this.sentCount = 0;
+                this.targetCount = 0;
                 
                 this.initElements();
                 this.initEventListeners();
@@ -252,6 +500,14 @@
                 this.clearBtn.addEventListener('click', () => this.clearForm());
                 this.usernameInput.addEventListener('input', () => this.updatePreview());
                 this.messageInput.addEventListener('input', () => this.updatePreview());
+                
+                // 批量发送控制事件
+                document.getElementById('startBatchBtn').addEventListener('click', () => this.startBatchSend());
+                document.getElementById('stopBatchBtn').addEventListener('click', () => this.stopBatchSend());
+                document.getElementById('batchUsername').addEventListener('change', (e) => {
+                    const fixedGroup = document.getElementById('fixedUsernameGroup');
+                    fixedGroup.style.display = e.target.value === 'fixed' ? 'block' : 'none';
+                });
                 
                 // 监听Enter键发送，Shift+Enter换行
                 this.messageInput.addEventListener('keydown', (e) => {
@@ -389,6 +645,179 @@
                 setTimeout(() => {
                     this.status.style.display = 'none';
                 }, 3000);
+            }
+            
+            // 批量发送功能
+            async startBatchSend() {
+                if (this.isBatchSending) {
+                    this.showBatchStatus('批量发送已在进行中', 'error');
+                    return;
+                }
+                
+                if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                    this.showBatchStatus('WebSocket未连接，无法开始批量发送', 'error');
+                    return;
+                }
+                
+                const topic = document.getElementById('batchTopic').value;
+                const count = parseInt(document.getElementById('batchCount').value);
+                const interval = parseInt(document.getElementById('batchInterval').value);
+                const usernameMode = document.getElementById('batchUsername').value;
+                const fixedUsername = document.getElementById('fixedUsername').value;
+                
+                if (count < 1 || count > 1000) {
+                    this.showBatchStatus('发送数量必须在1-1000之间', 'error');
+                    return;
+                }
+                
+                if (interval < 10 || interval > 5000) {
+                    this.showBatchStatus('发送间隔必须在10-5000毫秒之间', 'error');
+                    return;
+                }
+                
+                // 开始批量发送
+                this.isBatchSending = true;
+                this.sentCount = 0;
+                this.targetCount = count;
+                this.startTime = Date.now();
+                
+                // 更新UI状态
+                document.getElementById('startBatchBtn').disabled = true;
+                document.getElementById('stopBatchBtn').disabled = false;
+                document.getElementById('batchProgress').style.display = 'block';
+                
+                this.showBatchStatus(`开始批量发送 ${count} 条${topic}类型弹幕...`, 'info');
+                this.updateProgress();
+                
+                // 开始发送循环
+                this.batchInterval = setInterval(() => {
+                    if (this.sentCount >= this.targetCount) {
+                        this.stopBatchSend();
+                        return;
+                    }
+                    
+                    this.sendRandomDanmaku(topic, usernameMode, fixedUsername);
+                    this.sentCount++;
+                    
+                    // 更新进度和统计
+                    this.updateProgress();
+                    
+                }, interval);
+            }
+            
+            updateProgress() {
+                const progress = Math.round((this.sentCount / this.targetCount) * 100);
+                const elapsed = (Date.now() - this.startTime) / 1000; // 秒
+                const speed = this.sentCount / Math.max(elapsed, 0.1); // 条/秒
+                const remaining = this.targetCount - this.sentCount;
+                const eta = remaining / Math.max(speed, 0.1); // 预计剩余时间（秒）
+                
+                // 更新进度条
+                document.getElementById('progressFill').style.width = `${progress}%`;
+                
+                // 更新统计信息
+                document.getElementById('batchProgressText').textContent = 
+                    `进度: ${this.sentCount}/${this.targetCount} (${progress}%)`;
+                document.getElementById('batchSpeedText').textContent = 
+                    `速度: ${speed.toFixed(1)}条/秒, 预计剩余: ${eta.toFixed(1)}秒`;
+            }
+            
+            stopBatchSend() {
+                if (this.batchInterval) {
+                    clearInterval(this.batchInterval);
+                    this.batchInterval = null;
+                }
+                
+                this.isBatchSending = false;
+                
+                // 恢复UI状态
+                document.getElementById('startBatchBtn').disabled = false;
+                document.getElementById('stopBatchBtn').disabled = true;
+                
+                // 隐藏进度条
+                setTimeout(() => {
+                    document.getElementById('batchProgress').style.display = 'none';
+                    document.getElementById('progressFill').style.width = '0%';
+                }, 2000);
+                
+                if (this.sentCount > 0) {
+                    const elapsed = (Date.now() - this.startTime) / 1000;
+                    const avgSpeed = this.sentCount / Math.max(elapsed, 0.1);
+                    this.showBatchStatus(`批量发送完成！共发送 ${this.sentCount} 条弹幕，平均速度 ${avgSpeed.toFixed(1)} 条/秒`, 'success');
+                } else {
+                    this.showBatchStatus('批量发送已停止', 'info');
+                }
+            }
+            
+            sendRandomDanmaku(topic, usernameMode, fixedUsername) {
+                try {
+                    // 获取弹幕内容
+                    let content;
+                    if (topic === 'mixed') {
+                        // 混合类型，随机选择所有类型
+                        const allTypes = Object.keys(DANMAKU_TEMPLATES);
+                        const randomType = allTypes[Math.floor(Math.random() * allTypes.length)];
+                        const templates = DANMAKU_TEMPLATES[randomType];
+                        content = templates[Math.floor(Math.random() * templates.length)];
+                    } else {
+                        const templates = DANMAKU_TEMPLATES[topic];
+                        content = templates[Math.floor(Math.random() * templates.length)];
+                    }
+                    
+                    // 生成用户名
+                    let username;
+                    switch (usernameMode) {
+                        case 'random':
+                            username = this.generateRandomUsername();
+                            break;
+                        case 'fixed':
+                            username = fixedUsername || '批量用户';
+                            break;
+                        case 'numbered':
+                            username = `用户${this.sentCount + 1}`;
+                            break;
+                        default:
+                            username = this.generateRandomUsername();
+                    }
+                    
+                    // 发送弹幕
+                    const danmakuData = {
+                        type: 'danmaku',
+                        username: username,
+                        message: content,
+                        timestamp: new Date().toISOString()
+                    };
+                    
+                    this.ws.send(JSON.stringify(danmakuData));
+                    
+                } catch (error) {
+                    console.error('发送随机弹幕失败:', error);
+                }
+            }
+            
+            generateRandomUsername() {
+                const adjectives = ['可爱的', '聪明的', '勇敢的', '善良的', '帅气的', '美丽的', '机智的', '幽默的'];
+                const nouns = ['小猫', '小狗', '小鸟', '小鱼', '小熊', '小兔', '小鹿', '小马'];
+                const numbers = Math.floor(Math.random() * 1000) + 100;
+                
+                const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+                const noun = nouns[Math.floor(Math.random() * nouns.length)];
+                
+                return `${adj}${noun}${numbers}`;
+            }
+            
+            showBatchStatus(text, type) {
+                const batchStatus = document.getElementById('batchStatus');
+                batchStatus.textContent = text;
+                batchStatus.className = `status ${type}`;
+                batchStatus.style.display = 'block';
+                
+                // 5秒后自动隐藏状态信息
+                setTimeout(() => {
+                    if (!this.isBatchSending) {
+                        batchStatus.style.display = 'none';
+                    }
+                }, 5000);
             }
             
             updateConnectionStatus(status, text) {

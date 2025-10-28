@@ -320,7 +320,8 @@
       "bilibili_ACCESS_KEY_ID": "",
       "bilibili_ACCESS_KEY_SECRET": "",
       "bilibili_APP_ID": "",
-      "bilibili_ROOM_OWNER_AUTH_CODE": ""
+      "bilibili_ROOM_OWNER_AUTH_CODE": "",
+      "danmakuProxyEnabled": true
     },
     "WXBotConfig": {
       "WXAgent":"super-model",
