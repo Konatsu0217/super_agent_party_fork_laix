@@ -16,6 +16,8 @@ import httpx
 from scipy.io import wavfile
 import numpy as np
 import websockets
+import requests
+import json
 
 from py.load_files import get_file_content
 # 在程序最开始设置
@@ -6297,7 +6299,8 @@ class WebSocketHandler(blivedm.BaseHandler):
             "danmu_type": "danmaku"
         }
         print(msg_text)
-        asyncio.create_task(manager.broadcast(data))
+        # 修改：转发到danmaku_proxy_server，不再直接广播到前端
+        asyncio.create_task(self._forward_to_danmaku_proxy(data))
     
     def _on_gift(self, client: blivedm.BLiveClient, message: web_models.GiftMessage):
         msg_text = f'{message.uname} 赠送{message.gift_name}x{message.num} （{message.coin_type}瓜子x{message.total_coin}）'
@@ -6318,6 +6321,24 @@ class WebSocketHandler(blivedm.BaseHandler):
         }
         print(msg_text)
         asyncio.create_task(manager.broadcast(data))
+    
+    async def _forward_to_danmaku_proxy(self, data):
+        """将弹幕消息转发到danmaku_proxy服务器"""
+        try:
+            # 构建转发请求
+            proxy_url = "http://localhost:25535/danmaku/add_danmaku"
+            headers = {"Content-Type": "application/json"}
+            
+            # 发送POST请求到弹幕代理服务器
+            response = requests.post(proxy_url, json=data, headers=headers, timeout=5)
+            
+            if response.status_code == 200:
+                print(f"成功转发弹幕到代理服务器: {data['content']}")
+            else:
+                print(f"转发弹幕到代理服务器失败: {response.status_code} - {response.text}")
+                
+        except Exception as e:
+            print(f"转发弹幕到代理服务器时出错: {e}")
     
     def _on_super_chat(self, client: blivedm.BLiveClient, message: web_models.SuperChatMessage):
         msg_text = f'{message.uname}发送醒目留言：{message.message}'
@@ -6364,7 +6385,8 @@ class OpenLiveWebSocketHandler(blivedm.BaseHandler):
             "danmu_type": "danmaku"
         }
         print(msg_text)
-        asyncio.create_task(manager.broadcast(data))
+        # 修改：转发到danmaku_proxy_server，不再直接广播到前端
+        asyncio.create_task(self._forward_to_danmaku_proxy(data))
 
     def _on_open_live_gift(self, client: blivedm.OpenLiveClient, message: open_models.GiftMessage):
         coin_type = '金瓜子' if message.paid else '银瓜子'

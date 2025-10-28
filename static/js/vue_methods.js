@@ -6545,7 +6545,8 @@ let vue_methods = {
     try {
       // 根据当前协议选择ws或wss
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws/live/danmu`;
+      // 修改：连接到danmaku_proxy服务器的WebSocket端点
+      const wsUrl = `${protocol}//${window.location.hostname}:25535/ws/danmaku`;
       
       this.bilibiliWs = new WebSocket(wsUrl);
       

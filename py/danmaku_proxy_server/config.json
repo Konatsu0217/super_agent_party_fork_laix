@@ -1,0 +1,24 @@
+{
+  "server": {
+    "port": 25535,
+    "workers": "auto",
+    "limit_concurrency": 100,
+    "backlog": 512,
+    "reload": true
+  },
+  "ring": {
+    "node_capacity": 10,
+    "patch_lifetime": 8,
+    "ring_size": 4
+  },
+  "consumption": {
+    "check_url": "http://localhost:2345/api/consumption-status",
+    "check_timeout": 5,
+    "max_retry_count": 99,
+    "retry_interval": 1
+  },
+  "queue": {
+    "batch_size": 100,
+    "empty_sleep_time": 0.01
+  }
+}
