@@ -100,84 +100,116 @@ class RingNode:
         self.next: Optional[RingNode] = None  # 指向下一个节点
 
 
-# 3. 实现时间片轮转的环形链表
-class TimeSliceRing:
-    def __init__(self, size=config['ring_size'], node_capacity=config['node_capacity']):
-        self.size = size
-        self.node_capacity = node_capacity
-        self.head = None  # 头节点
-        self.current = None  # 当前节点
-        self._init_ring()  # 初始化环形链表
-        self.lock = threading.Lock()  # 添加线程锁保证线程安全
+# 3. 简化的双bucket交替工作机制
+class DualBucketSystem:
+    def __init__(self, bucket_capacity=config['node_capacity'], bucket_lifetime=config['patch_lifetime']):
+        self.bucket_capacity = bucket_capacity
+        self.bucket_lifetime = bucket_lifetime
+        self.lock = threading.Lock()
+        
+        # 两个bucket：A和B
+        self.bucket_a = {
+            'danmakus': deque(maxlen=bucket_capacity),
+            'start_time': time.time(),
+            'is_active': True,  # A桶当前是否活跃
+            'is_consuming': False  # A桶是否正在消费
+        }
+        
+        self.bucket_b = {
+            'danmakus': deque(maxlen=bucket_capacity),
+            'start_time': None,  # B桶在A桶发送后才开始计时
+            'is_active': False,  # B桶当前是否活跃
+            'is_consuming': False  # B桶是否正在消费
+        }
+        
+        self.current_bucket = self.bucket_a  # 当前活跃的bucket
     
-    def _init_ring(self):
-        """初始化环形链表"""
-        # 创建首节点
-        self.head = RingNode()
-        current = self.head
-        
-        # 创建剩余节点并连接成环形
-        for _ in range(self.size - 1):
-            new_node = RingNode()
-            current.next = new_node
-            current = new_node
-        
-        # 形成环形连接
-        current.next = self.head
-        
-        # 设置当前节点为头节点
-        self.current = self.head
-
     def add_danmaku(self, danmaku: Dict[str, Any]):
-        with self.lock:  # 使用线程锁保护共享资源
-            # 检查当前节点是否已满或已过期
-            current_time = time.time()
-
-            # 如果当前节点已过期，移动到下一个节点
-            if current_time - self.current.create_time > config['patch_lifetime']:
-                self.current = self.current.next
-                # 重置当前节点
-                self.current.danmakus = deque(maxlen=config['node_capacity'])  # 重新创建固定长度的双端队列
-                self.current.create_time = current_time
-
-            # 将弹幕添加到当前节点的队列中
-            # 由于使用了deque(maxlen=config['node_capacity'])，当队列满时会自动丢弃队头元素
-            self.current.danmakus.append(danmaku)
-    
-    def get_merged_danmaku(self, node: RingNode) -> Optional[Dict[str, Any]]:
-        """合并节点中的所有弹幕"""
+        """添加弹幕到当前活跃的bucket"""
         with self.lock:
-            if not node.danmakus:
+            if self.current_bucket['is_consuming']:
+                logger.warning(f"⚠️ Bucket正在消费中，弹幕被丢弃: {danmaku['content'][:30]}...")
+                return
+            
+            # 添加到当前活跃的bucket
+            self.current_bucket['danmakus'].append(danmaku)
+            logger.debug(f"📥 弹幕已添加到{'A' if self.current_bucket == self.bucket_a else 'B'}桶: {danmaku['content'][:30]}...")
+    
+    def get_consumable_bucket(self):
+        """获取可消费的bucket"""
+        with self.lock:
+            current_time = time.time()
+            
+            # 检查A桶是否到期且未在消费
+            if (self.bucket_a['is_active'] and 
+                not self.bucket_a['is_consuming'] and
+                self.bucket_a['danmakus'] and
+                current_time - self.bucket_a['start_time'] > self.bucket_lifetime):
+                return self.bucket_a
+            
+            # 检查B桶是否到期且未在消费（B桶已开始计时）
+            if (self.bucket_b['is_active'] and 
+                not self.bucket_b['is_consuming'] and
+                self.bucket_b['danmakus'] and
+                self.bucket_b['start_time'] is not None and
+                current_time - self.bucket_b['start_time'] > self.bucket_lifetime):
+                return self.bucket_b
+            
+            return None
+    
+    def mark_bucket_consuming(self, bucket):
+        """标记bucket正在消费"""
+        with self.lock:
+            bucket['is_consuming'] = True
+    
+    def switch_bucket(self):
+        """切换bucket：当前bucket消费完成后，切换到另一个bucket"""
+        with self.lock:
+            if self.current_bucket == self.bucket_a:
+                # A桶消费完成，切换到B桶
+                logger.info("🔄 A桶消费完成，切换到B桶")
+                self.bucket_a['is_active'] = False
+                self.bucket_a['is_consuming'] = False
+                self.bucket_a['danmakus'].clear()
+                
+                # B桶开始计时
+                self.bucket_b['is_active'] = True
+                self.bucket_b['start_time'] = time.time()
+                self.current_bucket = self.bucket_b
+                
+            else:
+                # B桶消费完成，切换回A桶
+                logger.info("🔄 B桶消费完成，切换到A桶")
+                self.bucket_b['is_active'] = False
+                self.bucket_b['is_consuming'] = False
+                self.bucket_b['danmakus'].clear()
+                self.bucket_b['start_time'] = None
+                
+                # A桶重新开始计时
+                self.bucket_a['is_active'] = True
+                self.bucket_a['start_time'] = time.time()
+                self.current_bucket = self.bucket_a
+    
+    def get_merged_danmaku(self, bucket):
+        """合并bucket中的所有弹幕"""
+        with self.lock:
+            if not bucket['danmakus']:
                 return None
             
             # 提取所有弹幕内容并合并
-            contents = [dm['content'] for dm in node.danmakus]
+            contents = [dm['content'] for dm in bucket['danmakus']]
             merged_content = '\n'.join(contents)
             
-            # 构建合并后的弹幕数据
             # 使用第一个弹幕的类型作为合并后的类型
-            first_danmaku = next(iter(node.danmakus), {})
+            first_danmaku = next(iter(bucket['danmakus']), {})
             merged_danmaku = {
                 'type': 'message',
                 'content': merged_content,
                 'danmu_type': first_danmaku.get('danmu_type', 'danmaku'),
-                'count': len(node.danmakus)  # 添加弹幕数量信息
+                'count': len(bucket['danmakus'])
             }
             
             return merged_danmaku
-    
-    # 其他方法也需要添加线程锁保护
-    def _clean_expired_nodes(self):
-        with self.lock:
-            # 清理所有过期的节点
-            current_time = time.time()
-            current = self.head
-    
-            for _ in range(self.size):
-                if current_time - current.create_time > config['patch_lifetime']:
-                    current.danmakus = deque(maxlen=config['node_capacity'])  # 重新创建固定长度的双端队列
-                    current.create_time = current_time
-                current = current.next
 
 
 # 4. 创建FastAPI应用实例
@@ -204,8 +236,8 @@ class DanmakuRequest(BaseModel):
     danmu_type: str = Field(..., description="弹幕类型")
 
 
-# 7. 创建环形链表实例
-ring = TimeSliceRing()
+# 7. 创建双bucket系统实例
+bucket_system = DualBucketSystem()
 
 # 创建一个线程安全的异步队列
 class AsyncDanmakuQueue:
@@ -294,7 +326,7 @@ class EventLoopManager:
 event_loop_manager = EventLoopManager()
 
 
-# 修改process_danmaku_batch函数，保持将弹幕添加到TimeSliceRing但不合并
+# 修改process_danmaku_batch函数，将弹幕添加到bucket系统
 async def process_danmaku_batch():
     """后台任务：批量处理弹幕数据"""
     while True:
@@ -309,7 +341,7 @@ async def process_danmaku_batch():
         try:
             # 批量处理弹幕
             for danmaku in batch:
-                ring.add_danmaku(danmaku)
+                bucket_system.add_danmaku(danmaku)
         except Exception as e:
             logger.error(f"处理弹幕批次时出错: {str(e)}")
         
@@ -322,41 +354,45 @@ async def consume_async():
     """异步消费过期的弹幕数据，会先检查远程服务是否允许消费，然后发送到主服务接口"""
     while True:
         await asyncio.sleep(1)  # 异步等待1秒
-        current_time = time.time()
-
         # 检查远程服务是否允许消费
         if not can_consume():
             logger.info("Remote service indicates consumption is not allowed at this time")
             continue
-
-        # 遍历环形链表，检查并消费过期节点
-        current = ring.head
-        for _ in range(ring.size):
-            if current_time - current.create_time > config['patch_lifetime'] and current.danmakus:
-                # 消费逻辑 - 获取合并后的弹幕数据（在消费前才进行合并）
-                merged_danmaku = ring.get_merged_danmaku(current)
-                if merged_danmaku:
-                    print(f"Consuming merged danmaku at {datetime.datetime.now()}: {merged_danmaku}")
+        
+        # 双bucket交替工作机制
+        consumable_bucket = bucket_system.get_consumable_bucket()
+        if consumable_bucket:
+            # 标记bucket为正在消费状态
+            bucket_system.mark_bucket_consuming(consumable_bucket)
+            
+            # 获取合并后的弹幕数据
+            merged_danmaku = bucket_system.get_merged_danmaku(consumable_bucket)
+            if merged_danmaku:
+                bucket_name = "A" if consumable_bucket == bucket_system.bucket_a else "B"
+                logger.info(f"🔄 双bucket交替工作 - 消费{bucket_name}桶弹幕: {merged_danmaku['content'][:50]}...")
+                
+                # 构建消费消息
+                consume_message = {
+                    'type': 'message',
+                    'content': merged_danmaku['content'],
+                    'danmu_type': merged_danmaku['danmu_type'],
+                    'timestamp': datetime.datetime.now().isoformat()
+                }
+                
+                # 发送到主服务
+                try:
+                    await send_to_main_server(consume_message)
+                    logger.info(f"✅ 成功发送到主服务: {consume_message}")
                     
-                    # 发送到主服务的消费接口
-                    consume_message = {
-                        'type': 'message',
-                        'content': merged_danmaku['content'],
-                        'danmu_type': merged_danmaku['danmu_type'],
-                        'timestamp': datetime.datetime.now().isoformat(),
-                        'count': merged_danmaku.get('count', 1)
-                    }
-                    
-                    # 异步发送到主服务
-                    try:
-                        await send_to_main_server(consume_message)
-                        logger.info(f"成功发送到主服务: {consume_message}")
-                    except Exception as e:
-                        logger.error(f"发送到主服务失败: {e}", exc_info=True)
-                    
-                    # 清空已消费的弹幕
-                    current.danmakus.clear()
-            current = current.next
+                    # 切换bucket（在switch_bucket中处理）
+                    bucket_system.switch_bucket()
+                        
+                except Exception as e:
+                    logger.error(f"发送到主服务失败: {e}", exc_info=True)
+                    # 消费失败也要切换bucket
+                    bucket_system.switch_bucket()
+        else:
+            logger.debug("暂无可消费节点，继续等待...")
 
 
 # 保持同步版本用于线程
@@ -577,7 +613,7 @@ if __name__ == "__main__":
             host="0.0.0.0",  # 允许所有IP连接
             port=config['port'],
             reload=config['reload'],
-            workers=1,  # 使用单进程模式便于调试
+            workers=workers,  # 使用单进程模式便于调试
             limit_concurrency=config['limit_concurrency'],
             backlog=config['backlog'],
             log_level="info"

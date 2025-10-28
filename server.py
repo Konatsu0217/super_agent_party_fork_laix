@@ -6616,18 +6616,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 new_settings = data.get("data", {})
                 await save_settings(new_settings)
                 
-                # 更新状态跟踪器中的TTS/VRM启用状态
-                if 'ttsSettings' in new_settings:
-                    tts_enabled = new_settings['ttsSettings'].get('enabled', False)
-                    logger.info(f"🎙️ TTS启用状态更新: {tts_enabled}")
-                    
-                if 'VRMConfig' in new_settings:
-                    vrm_enabled = new_settings['VRMConfig'].get('enabled', False)
-                    logger.info(f"🎭 VRM启用状态更新: {vrm_enabled}")
-                
-                # 更新全局settings变量
-                settings = new_settings
-                
                 # 发送确认消息（携带相同 correlationId）
                 await websocket.send_json({
                     "type": "settings_saved",

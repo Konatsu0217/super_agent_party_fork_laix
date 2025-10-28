@@ -25,6 +25,6 @@
     "consume_url": "http://localhost:3456/api/danmaku/consume",
     "timeout": 5,
     "max_retry_count": 3,
-    "retry_interval": 1
+    "retry_interval": 3
   }
 }
