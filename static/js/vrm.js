@@ -692,6 +692,16 @@ class IdleAnimationManager {
         this.lastAnimationEndTime = 0;
 
         try {
+            // 暂停呼吸动画
+            if (breathAction) {
+                breathAction.fadeOut(0.3);
+                setTimeout(() => {
+                    if (breathAction) {
+                        breathAction.stop();
+                    }
+                }, 300);
+            }
+
             // 创建VRM动画剪辑
             const clip = createVRMAnimationClip(animationData.animation, this.vrm);
             if (!clip) {
@@ -785,6 +795,12 @@ class IdleAnimationManager {
                 this.isTransitioning = false;
                 this.isInDefaultPosition = true; // 标记为默认位置
                 this.isPlaying = false;
+
+                // 恢复呼吸动画
+                if (breathAction) {
+                    breathAction.setEffectiveWeight(1.0);
+                    breathAction.play();
+                }
 
                 // 稍等片刻后播放下一个动画
                 setTimeout(() => {
@@ -1078,6 +1094,12 @@ class IdleAnimationManager {
         
         // 停止位置检查定时任务
         this.stopPositionCheckTimer();
+        
+        // 恢复呼吸动画
+        if (breathAction) {
+            breathAction.setEffectiveWeight(1.0);
+            breathAction.play();
+        }
     }
 
     // 只停止程序化动画的方法
@@ -1536,7 +1558,7 @@ function createIdleClip(vrm) {
 
 function createBreathClip(vrm) {
     const tracks = [];
-    const duration = 4; // 4秒一个呼吸周期
+    const duration = 6; // 6秒一个呼吸周期，确保完整左右晃动
     const fps = 30;
     const frameCount = duration * fps;
 
@@ -1545,10 +1567,10 @@ function createBreathClip(vrm) {
         times.push(i / fps);
     }
 
-    // 呼吸缩放动画
+    // 呼吸缩放动画 - 减小幅度到0.003
     const scaleValues = [];
     times.forEach(time => {
-        const breathScale = 1 + Math.sin(time * Math.PI / 2) * 0.006; // 更自然的呼吸节奏
+        const breathScale = 1 + Math.sin(time * Math.PI * 2 / duration) * 0.003; // 使用完整周期
         scaleValues.push(breathScale, breathScale, breathScale);
     });
 
@@ -1559,6 +1581,106 @@ function createBreathClip(vrm) {
     );
 
     tracks.push(scaleTrack);
+    
+    // 添加上半身轻微左右摇晃
+    const upperBodyBones = ['chest', 'upperChest', 'spine'];
+    upperBodyBones.forEach(boneName => {
+        const bone = vrm.humanoid.getNormalizedBoneNode(boneName);
+        if (!bone) return;
+
+        const values = [];
+        times.forEach(time => {
+            const cycleTime = (time / duration) * 2 * Math.PI;
+            let euler = new THREE.Euler(0, 0, 0);
+            
+            // 绕Z轴左右摇摆（左右倾斜）
+            const swayAmount = 0.035; // 0.1幅度清晰可见
+            const swaySpeed = 1.0; // 6秒完成一个完整左右循环
+            
+            switch (boneName) {
+                case 'chest':
+                case 'upperChest':
+                    // 胸部绕Z轴左右摇摆（左右倾斜）
+                    euler.set(
+                        0, // X轴保持不动
+                        0, // Y轴保持不动  
+                        Math.sin(cycleTime * swaySpeed) * swayAmount // Z轴左右摇摆
+                    );
+                    break;
+                case 'spine':
+                    // 脊柱绕Z轴摇摆，幅度稍小
+                    euler.set(
+                        0,
+                        0,
+                        Math.sin(cycleTime * swaySpeed) * swayAmount * 0.8 // Z轴摇摆
+                    );
+                    break;
+            }
+            
+            const quaternion = new THREE.Quaternion();
+            quaternion.setFromEuler(euler);
+            values.push(...quaternion.toArray());
+        });
+
+        const track = new THREE.QuaternionKeyframeTrack(
+            bone.name + '.quaternion',
+            times,
+            values
+        );
+        tracks.push(track);
+    });
+    
+    // 添加手臂联动 - 身体倾斜时对应手臂轻微抬起
+    const armBones = ['leftUpperArm', 'rightUpperArm'];
+    armBones.forEach(boneName => {
+        const bone = vrm.humanoid.getNormalizedBoneNode(boneName);
+        if (!bone) return;
+
+        const values = [];
+        times.forEach(time => {
+            const cycleTime = (time / duration) * 2 * Math.PI;
+            
+            const swaySpeed = 1.0;
+            const isLeftArm = boneName.includes('left');
+            const v = isVRM1 ? 1 : -1;
+            
+            // 获取当前骨骼的旋转状态
+            const currentRotation = bone.quaternion.clone();
+            let euler = new THREE.Euler().setFromQuaternion(currentRotation);
+            
+            // 根据身体倾斜方向调整手臂 - 基于当前姿势做相对调整
+            const bodySway = Math.sin(cycleTime * swaySpeed);
+            const liftAmount = 0.1; // 极轻微的抬起幅度
+            
+            if (isLeftArm) {
+                // 左臂：身体向左倾斜时轻微内旋
+                if (bodySway > 0) {
+                    euler.z += liftAmount * bodySway * v; // 在当前Z轴基础上轻微调整
+                } else {
+                    euler.z += liftAmount*0.3 * bodySway * v; // 在当前Z轴基础上轻微调整
+                }
+            } else {
+                // 右臂：身体向右倾斜时轻微内旋
+                if (bodySway < 0) {
+                    euler.z += -liftAmount * Math.abs(bodySway) * v; // 在当前Z轴基础上轻微调整
+                } else {
+                    euler.z += -liftAmount*0.3 * Math.abs(bodySway) * v; // 在当前Z轴基础上轻微调整
+                }
+            }
+            
+            const quaternion = new THREE.Quaternion();
+            quaternion.setFromEuler(euler);
+            values.push(...quaternion.toArray());
+        });
+
+        const track = new THREE.QuaternionKeyframeTrack(
+            bone.name + '.quaternion',
+            times,
+            values
+        );
+        tracks.push(track);
+    });
+    
     return new THREE.AnimationClip('breath', duration, tracks);
 }
 
@@ -1575,19 +1697,26 @@ function createBlinkClip(vrm) {
         times.push(i / fps);
     }
 
+    // 生成随机眨眼时间偏移（±0.3秒）
+    const randomDelta1 = (Math.random() - 0.5) * 0.6; // ±0.3秒
+    const randomDelta2 = (Math.random() - 0.5) * 0.6; // ±0.3秒
+    
+    const blinkTime1 = 1.5 + randomDelta1; // 第一次眨眼时间
+    const blinkTime2 = 4.0 + randomDelta2; // 第二次眨眼时间
+
     // 创建眨眼模式：在随机时间点眨眼
     const blinkValues = [];
     times.forEach(time => {
         let blinkValue = 0;
 
-        // 在第1.5秒单次眨眼
-        if (time >= 1.4 && time <= 1.6) {
-            const progress = (time - 1.4) / 0.2;
+        // 第一次眨眼（随机时间）
+        if (time >= blinkTime1 - 0.1 && time <= blinkTime1 + 0.1) {
+            const progress = (time - (blinkTime1 - 0.1)) / 0.2;
             blinkValue = Math.sin(progress * Math.PI);
         }
-        // 在第4秒双次眨眼
-        else if (time >= 3.8 && time <= 4.4) {
-            const localTime = time - 3.8;
+        // 第二次双次眨眼（随机时间）
+        else if (time >= blinkTime2 - 0.2 && time <= blinkTime2 + 0.2) {
+            const localTime = time - (blinkTime2 - 0.2);
             if (localTime < 0.15) {
                 blinkValue = Math.sin((localTime / 0.15) * Math.PI);
             } else if (localTime > 0.25 && localTime < 0.4) {
