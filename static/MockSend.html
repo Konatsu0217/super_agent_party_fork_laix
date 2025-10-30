@@ -256,6 +256,16 @@
                 <textarea id="message" name="message" placeholder="请输入要发送的弹幕内容..." required></textarea>
             </div>
             
+            <div class="form-group">
+                <label for="danmuType">弹幕类型</label>
+                <select id="danmuType" name="danmuType">
+                    <option value="danmaku">📝 普通弹幕</option>
+                    <option value="super_chat">💰 超级留言</option>
+                    <option value="gift">🎁 礼物</option>
+                    <option value="buy_guard">🛡️ 购买守护</option>
+                </select>
+            </div>
+            
             <div class="danmaku-preview" id="preview" style="display: none;">
                 <h3>预览</h3>
                 <div class="danmaku-content" id="previewContent"></div>
@@ -283,6 +293,9 @@
                     <option value="spam">🔢 重复刷屏</option>
                     <option value="interaction">💬 互动类</option>
                     <option value="question">❓ 质疑类</option>
+                    <option value="super_chat">💰 超级留言</option>
+                    <option value="gift">🎁 礼物</option>
+                    <option value="buy_guard">🛡️ 购买守护</option>
                     <option value="mixed">🎲 混合类型</option>
                 </select>
             </div>
@@ -462,6 +475,48 @@
                 "这么简单？",
                 "不可能吧？",
                 "你确定？"
+            ],
+            
+            // 付费消息模板 - 超级留言
+            super_chat: [
+                "主播太厉害了！这是我的一点心意",
+                "感谢主播的精彩直播，小小打赏不成敬意",
+                "主播的技术真的牛，必须支持一下！",
+                "这个技巧太实用了，值得打赏",
+                "主播人帅技术好，必须支持",
+                "感谢主播分享，这是我的一点心意",
+                "主播辛苦了，喝杯咖啡吧",
+                "太精彩了！忍不住打赏",
+                "主播的内容很有价值，支持一下",
+                "感谢主播的教学，收获很大"
+            ],
+            
+            // 付费消息模板 - 礼物
+            gift: [
+                "🎁 送上一个火箭！",
+                "💐 献上一束鲜花",
+                "🎂 送个蛋糕庆祝一下",
+                "💎 送上钻石支持主播",
+                "🌟 送个星星表示喜爱",
+                "🎈 送个气球增加气氛",
+                "🎊 送上礼花庆祝",
+                "💝 送上爱心礼物",
+                "🎵 送个音符支持",
+                "🌹 送上玫瑰表示感谢"
+            ],
+            
+            // 付费消息模板 - 购买守护
+            buy_guard: [
+                "🛡️ 开通守护支持主播！",
+                "成为守护，保护主播！",
+                "守护主播，从我做起！",
+                "开通守护，为主播护航！",
+                "守护权益，支持主播！",
+                "成为忠实守护者！",
+                "守护主播的每一场直播！",
+                "开通年度守护支持！",
+                "守护主播，守护精彩！",
+                "守护加持，主播加油！"
             ]
         };
 
@@ -488,6 +543,7 @@
                 this.form = document.getElementById('danmakuForm');
                 this.usernameInput = document.getElementById('username');
                 this.messageInput = document.getElementById('message');
+                this.danmuTypeSelect = document.getElementById('danmuType');
                 this.preview = document.getElementById('preview');
                 this.previewContent = document.getElementById('previewContent');
                 this.status = document.getElementById('status');
@@ -500,6 +556,7 @@
                 this.clearBtn.addEventListener('click', () => this.clearForm());
                 this.usernameInput.addEventListener('input', () => this.updatePreview());
                 this.messageInput.addEventListener('input', () => this.updatePreview());
+                this.danmuTypeSelect.addEventListener('change', () => this.updatePreview());
                 
                 // 批量发送控制事件
                 document.getElementById('startBatchBtn').addEventListener('click', () => this.startBatchSend());
@@ -516,6 +573,18 @@
                         this.handleSubmit(e);
                     }
                 });
+            }
+            
+            handleMessage(data) {
+                // 处理收到的消息
+                if (data.type === 'danmaku_response') {
+                    if (data.success) {
+                        this.showStatus(`弹幕发送成功: ${data.message}`, 'success');
+                        this.clearForm();
+                    } else {
+                        this.showStatus(`弹幕发送失败: ${data.error}`, 'error');
+                    }
+                }
             }
             
             connect() {
@@ -570,18 +639,6 @@
                 }
             }
             
-            handleMessage(data) {
-                // 处理收到的消息
-                if (data.type === 'danmaku_response') {
-                    if (data.success) {
-                        this.showStatus(`弹幕发送成功: ${data.message}`, 'success');
-                        this.clearForm();
-                    } else {
-                        this.showStatus(`弹幕发送失败: ${data.error}`, 'error');
-                    }
-                }
-            }
-            
             async handleSubmit(e) {
                 e.preventDefault();
                 
@@ -592,6 +649,7 @@
                 
                 const username = this.usernameInput.value.trim();
                 const message = this.messageInput.value.trim();
+                const danmuType = this.danmuTypeSelect.value;
                 
                 if (!username || !message) {
                     this.showStatus('请填写用户名和弹幕内容', 'error');
@@ -599,18 +657,25 @@
                 }
                 
                 try {
-                    // 发送弹幕消息
+                    // 通过WebSocket发送消息到主服务器
                     const danmakuData = {
                         type: 'danmaku',
                         username: username,
                         message: message,
+                        danmu_type: danmuType,  // 添加消息类型
                         timestamp: new Date().toISOString()
                     };
                     
                     this.ws.send(JSON.stringify(danmakuData));
                     console.log('发送弹幕:', danmakuData);
                     
-                    this.showStatus('弹幕发送中...', 'info');
+                    const typeText = {
+                        'danmaku': '普通弹幕',
+                        'super_chat': '超级留言',
+                        'gift': '礼物',
+                        'buy_guard': '购买守护'
+                    }[danmuType];
+                    this.showStatus(`${typeText}发送中...`, 'info');
                     
                 } catch (error) {
                     console.error('发送弹幕失败:', error);
@@ -621,10 +686,17 @@
             updatePreview() {
                 const username = this.usernameInput.value.trim();
                 const message = this.messageInput.value.trim();
+                const danmuType = this.danmuTypeSelect.value;
                 
                 if (username && message) {
                     this.preview.style.display = 'block';
-                    this.previewContent.textContent = `${username}发送弹幕：${message}`;
+                    const typeText = {
+                        'danmaku': '普通弹幕',
+                        'super_chat': '超级留言',
+                        'gift': '礼物',
+                        'buy_guard': '购买守护'
+                    }[danmuType];
+                    this.previewContent.textContent = `${username}发送${typeText}：${message}`;
                 } else {
                     this.preview.style.display = 'none';
                 }
@@ -651,11 +723,6 @@
             async startBatchSend() {
                 if (this.isBatchSending) {
                     this.showBatchStatus('批量发送已在进行中', 'error');
-                    return;
-                }
-                
-                if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-                    this.showBatchStatus('WebSocket未连接，无法开始批量发送', 'error');
                     return;
                 }
                 
@@ -753,15 +820,19 @@
                 try {
                     // 获取弹幕内容
                     let content;
+                    let danmuType = 'danmaku';
+                    
                     if (topic === 'mixed') {
                         // 混合类型，随机选择所有类型
                         const allTypes = Object.keys(DANMAKU_TEMPLATES);
                         const randomType = allTypes[Math.floor(Math.random() * allTypes.length)];
                         const templates = DANMAKU_TEMPLATES[randomType];
                         content = templates[Math.floor(Math.random() * templates.length)];
+                        danmuType = randomType;
                     } else {
                         const templates = DANMAKU_TEMPLATES[topic];
                         content = templates[Math.floor(Math.random() * templates.length)];
+                        danmuType = topic;
                     }
                     
                     // 生成用户名
@@ -780,11 +851,12 @@
                             username = this.generateRandomUsername();
                     }
                     
-                    // 发送弹幕
+                    // 通过WebSocket发送消息到主服务器
                     const danmakuData = {
                         type: 'danmaku',
                         username: username,
                         message: content,
+                        danmu_type: 'danmaku',  // 添加消息类型
                         timestamp: new Date().toISOString()
                     };
                     

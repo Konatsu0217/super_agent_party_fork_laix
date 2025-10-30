@@ -6329,7 +6329,7 @@ class DanmakuData(BaseModel):
 
 @app.post("/api/danmaku/consume")
 async def consume_danmaku(data: DanmakuData):
-    """接收弹幕代理服务发送的待消费弹幕消息，并广播到直播WebSocket客户端"""
+    """接收弹幕代理服务发送的待消费弹幕消息，并广播到直播WebSocket客户端，付费消息触发LLM处理"""
     try:
         print(f"[弹幕消费] 接收到弹幕消息: {data.content}")
         logger.info(f"[弹幕消费] 接收到弹幕消息: {data.content}")
@@ -6346,15 +6346,26 @@ async def consume_danmaku(data: DanmakuData):
         # 广播到直播WebSocket客户端 (/ws/live/danmu)
         # 使用 manager.broadcast 发送到直播弹幕连接
         await manager.broadcast(broadcast_message)
-        
+
         client_count = len(manager.active_connections)
         print(f"[弹幕消费] 成功广播弹幕消息到 {client_count} 个直播客户端: {data.content}")
         logger.info(f"[弹幕消费] 成功广播弹幕消息到 {client_count} 个直播客户端: {data.content}")
         
+        # 付费消息自动触发LLM处理
+        paid_types = {'super_chat', 'gift', 'buy_guard'}
+        if data.danmu_type in paid_types:
+            print(f"[弹幕消费] 检测到付费消息类型: {data.danmu_type}，自动触发LLM处理")
+            logger.info(f"[弹幕消费] 检测到付费消息类型: {data.danmu_type}，自动触发LLM处理")
+            
+            # 异步触发LLM处理付费消息
+            asyncio.create_task(process_paid_message_for_llm(data))
+        
         return {
             "success": True,
             "message": f"弹幕消息已广播到 {client_count} 个直播客户端",
-            "client_count": client_count
+            "client_count": client_count,
+            "danmu_type": data.danmu_type,
+            "is_paid": data.danmu_type in paid_types
         }
     except Exception as e:
         error_msg = f"广播弹幕消息失败: {str(e)}"
@@ -6364,6 +6375,49 @@ async def consume_danmaku(data: DanmakuData):
             "success": False,
             "message": error_msg
         }
+
+# 处理付费消息并触发LLM
+async def process_paid_message_for_llm(danmaku_data):
+    """处理付费消息并触发LLM处理，保留付费类型标识"""
+    try:
+        print(f"[付费消息处理] 开始处理付费消息: {danmaku_data.content}, 类型: {danmaku_data.danmu_type}")
+        logger.info(f"[付费消息处理] 开始处理付费消息: {danmaku_data.content}, 类型: {danmaku_data.danmu_type}")
+        
+        # 构建包含付费类型标识的用户消息
+        paid_type_text = {
+            'super_chat': '超级留言',
+            'gift': '礼物',
+            'buy_guard': '购买舰长'
+        }.get(danmaku_data.danmu_type, '付费消息')
+        
+        # 构建特殊格式的消息，包含付费类型标识
+        enhanced_content = f"[{paid_type_text}] {danmaku_data.content}"
+        
+        # 创建ChatRequest对象
+        chat_request = ChatRequest(
+            messages=[{
+                "role": "user", 
+                "content": enhanced_content
+            }],
+            model="super-model",  # 使用默认模型
+            stream=True,  # 使用流式响应
+            temperature=0.7
+        )
+        
+        # 调用LLM API处理付费消息
+        print(f"[付费消息处理] 调用LLM处理增强消息: {enhanced_content}")
+        logger.info(f"[付费消息处理] 调用LLM处理增强消息: {enhanced_content}")
+        
+        # 异步调用聊天端点
+        response = await chat_endpoint(chat_request, None)
+        
+        print(f"[付费消息处理] 付费消息LLM处理完成: {danmaku_data.danmu_type}")
+        logger.info(f"[付费消息处理] 付费消息LLM处理完成: {danmaku_data.danmu_type}")
+        
+    except Exception as e:
+        error_msg = f"付费消息LLM处理失败: {str(e)}"
+        print(f"[付费消息处理] {error_msg}")
+        logger.error(f"[付费消息处理] {error_msg}", exc_info=True)
 
 # WebSocket路由
 @app.websocket("/ws/live/danmu")
@@ -6543,7 +6597,8 @@ class WebSocketHandler(blivedm.BaseHandler):
             "danmu_type": "gift"
         }
         print(msg_text)
-        asyncio.create_task(manager.broadcast(data))
+        asyncio.create_task(_forward_to_danmaku_proxy(data))
+        # asyncio.create_task(manager.broadcast(data))
     
     def _on_buy_guard(self, client: blivedm.BLiveClient, message: web_models.GuardBuyMessage):
         msg_text = f'{message.username} 上舰，guard_level={message.guard_level}'
@@ -6553,7 +6608,8 @@ class WebSocketHandler(blivedm.BaseHandler):
             "danmu_type": "buy_guard"
         }
         print(msg_text)
-        asyncio.create_task(manager.broadcast(data))
+        # asyncio.create_task(manager.broadcast(data))
+        asyncio.create_task(_forward_to_danmaku_proxy(data))
 
     def _on_super_chat(self, client: blivedm.BLiveClient, message: web_models.SuperChatMessage):
         msg_text = f'{message.uname}发送醒目留言：{message.message}'
@@ -6563,7 +6619,8 @@ class WebSocketHandler(blivedm.BaseHandler):
             "danmu_type": "super_chat"
         }
         print(msg_text)
-        asyncio.create_task(manager.broadcast(data))
+        # asyncio.create_task(manager.broadcast(data))
+        asyncio.create_task(_forward_to_danmaku_proxy(data))
 
     def _on_interact_word(self, client: blivedm.BLiveClient, message: web_models.InteractWordMessage):
         if message.msg_type == 1:
@@ -6731,13 +6788,26 @@ async def websocket_endpoint(websocket: WebSocket):
                 # 处理模拟弹幕消息
                 username = data.get("username", "匿名用户")
                 message = data.get("message", "")
+                danmu_type = data.get("danmu_type", "danmaku")  # 获取消息类型，默认为danmaku
                 
                 if message:
-                    # 创建模拟的弹幕消息数据
+                    # 根据消息类型构建不同的内容格式
+                    if danmu_type == "danmaku":
+                        content = f'{username}发送弹幕：{message}'
+                    elif danmu_type == "super_chat":
+                        content = f'{username}发送SuperChat：{message}'
+                    elif danmu_type == "gift":
+                        content = f'{username}发送礼物：{message}'
+                    elif danmu_type == "buy_guard":
+                        content = f'{username}购买舰长：{message}'
+                    else:
+                        content = f'{username}发送{danmu_type}：{message}'
+                    
+                    # 创建模拟的弹幕消息数据，将类型信息放入content中
                     danmaku_data = {
-                        'type': 'message',
-                        'content': f'{username}发送弹幕：{message}',
-                        "danmu_type": "danmaku"
+                        'type': 'danmaku',  # 必须是danmaku类型，符合代理服务API要求
+                        'content': content,
+                        'danmu_type': danmu_type  # 具体的弹幕类型：danmaku/super_chat/gift/buy_guard
                     }
                     
                     # 检查弹幕代理服务是否启用，如果启用则转发到代理服务
@@ -6749,8 +6819,13 @@ async def websocket_endpoint(websocket: WebSocket):
                             proxy_url = "http://localhost:25535/danmaku/add_danmaku"
                             headers = {"Content-Type": "application/json"}
                             
+                            print(f"[调试] 转发到代理服务器: {proxy_url}")
+                            print(f"[调试] 转发数据: {danmaku_data}")
+                            
                             # 发送POST请求到弹幕代理服务器
                             response = requests.post(proxy_url, json=danmaku_data, headers=headers, timeout=5)
+                            
+                            print(f"[调试] 代理服务器响应: {response.status_code} - {response.text}")
                             
                             if response.status_code == 200:
                                 print(f"[模拟弹幕] 成功转发到代理服务器: {username}发送弹幕：{message}")

@@ -394,19 +394,15 @@ class EventLoopManager:
 event_loop_manager = EventLoopManager()
 
 
-# 修改process_danmaku_batch函数，只处理付费消息
+# 修改process_danmaku_batch函数，处理付费消息并监控普通消息
 async def process_danmaku_batch():
-    """后台任务：只处理付费消息，普通消息直接走AB桶机制"""
+    """后台任务：处理付费消息，普通消息由consume_async处理"""
     while True:
-        if not can_consume():
-            await asyncio.sleep(1)
-            continue
-
-        # 只检查付费消息队列
+        # 首先检查付费消息队列（最高优先级）
         paid_message = await danmaku_queue.get_paid_message()
-
+        
         if paid_message:
-            # 付费消息直接发送到主服务，不经过bucket系统
+            # 付费消息直接发送，不检查消费状态（优先处理）
             try:
                 consume_message = {
                     'type': 'message',
@@ -427,7 +423,7 @@ async def process_danmaku_batch():
             except Exception as e:
                 logger.error(f"付费消息发送失败: {str(e)}")
 
-        # 没有付费消息时休眠，普通消息直接走AB桶，不需要在这里处理
+        # 没有付费消息时短暂休眠，让出CPU给普通消息处理
         await asyncio.sleep(config['empty_sleep_time'])  # 10ms
 
 
@@ -603,6 +599,7 @@ async def send_to_main_server(message: dict):
 @app.on_event("startup")
 async def startup_event():
     # 启动队列监控任务
+    asyncio.create_task(process_danmaku_batch())
     asyncio.create_task(monitor_queue_status())
     # 启动消费者线程
     consumer_thread = threading.Thread(target=consume, daemon=True)
