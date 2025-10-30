@@ -636,7 +636,7 @@ class IdleAnimationManager {
         this.lastAnimationEndTime = Date.now();
         this.isInDefaultPosition = false;
         
-        this.playNextVRMAAnimation();
+        // this.playNextVRMAAnimation();
     }
 
     // 播放下一个VRMA动画
@@ -802,28 +802,7 @@ class IdleAnimationManager {
                     breathAction.play();
                 }
 
-                // 稍等片刻后播放下一个动画
-                setTimeout(() => {
-                    if (this.currentMode === 'vrma' && this.isActive) {
-                        // 如果有插入动画，优先播放插入的动画
-                        if (this.hasInsertedAnimation && this.insertedAnimation) {
-                            console.log('Playing inserted animation after transition:', this.insertedAnimation.name);
-                            this.currentIndex = this.animationQueue.findIndex(anim => anim.name === this.insertedAnimation.name);
-                            this.playVRMAAnimation(this.insertedAnimation);
-
-                            // 清除插入动画标记
-                            this.hasInsertedAnimation = false;
-                            this.insertedAnimation = null;
-                        } else {
-                            // 正常播放下一个动画，但检查是否有过渡中的插入动画
-                            // if (!this.hasInsertedAnimation) {
-                            //     this.playNextVRMAAnimation();
-                            // }
-                        }
-                    }
-                }, 300); // 300ms缓冲时间
-
-            }, this.pauseBetweenAnimations * 3000);
+            }, this.pauseBetweenAnimations * 100);
 
         }, this.transitionDuration * 1200); // 等待过渡完成
     }
@@ -1594,7 +1573,7 @@ function createBreathClip(vrm) {
             let euler = new THREE.Euler(0, 0, 0);
             
             // 绕Z轴左右摇摆（左右倾斜）
-            const swayAmount = 0.035; // 0.1幅度清晰可见
+            const swayAmount = 0.02; // 0.1幅度清晰可见
             const swaySpeed = 1.0; // 6秒完成一个完整左右循环
             
             switch (boneName) {
