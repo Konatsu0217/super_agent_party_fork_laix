@@ -1,7 +1,7 @@
 import re
 import json
 import asyncio
-from typing import AsyncGenerator, List, Dict, Any
+from typing import AsyncGenerator, List, Dict, Any, Optional
 import httpx
 
 from openai.types.chat import (
@@ -32,7 +32,7 @@ class DifyOpenAIAsync:
     # 内部工具
     # --------------------------------------------------
     @staticmethod
-    def _extract_conv_id_from_messages(messages: List[ChatCompletionMessageParam]) -> str | None:
+    def _extract_conv_id_from_messages(messages: List[ChatCompletionMessageParam]) -> Optional[str]:
         for m in messages:
             if m["role"] == "assistant":
                 m_content = m.get("content") or ""
