@@ -18,6 +18,7 @@ import numpy as np
 import websockets
 import requests
 import json
+import subprocess
 
 from py.load_files import get_file_content
 # 在程序最开始设置
@@ -6096,6 +6097,92 @@ manager = ConnectionManager()
 danmaku_proxy_process = None
 danmaku_proxy_pid = None
 
+# 新增：启动弹幕代理服务
+async def start_danmaku_proxy_service():
+    """启动弹幕代理服务"""
+    global danmaku_proxy_process, danmaku_proxy_pid
+    
+    try:
+        # 检查是否已经在运行
+        if danmaku_proxy_process is not None and danmaku_proxy_process.poll() is None:
+            print("[弹幕代理] 服务已在运行中")
+            return True
+            
+        print("[弹幕代理] 正在启动弹幕代理服务...")
+        
+        # 构建启动命令
+        proxy_script = os.path.join(os.path.dirname(__file__), 'py', 'danmaku_proxy_server', 'danmaku_proxy.py')
+        
+        # 使用Python启动弹幕代理服务
+        danmaku_proxy_process = subprocess.Popen([
+            sys.executable,  # 使用当前Python解释器
+            proxy_script
+        ], 
+        cwd=os.path.dirname(__file__),  # 设置工作目录
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+        )
+        
+        danmaku_proxy_pid = danmaku_proxy_process.pid
+        print(f"[弹幕代理] 服务启动成功，PID: {danmaku_proxy_pid}")
+        
+        # 等待服务启动
+        await asyncio.sleep(2)
+        
+        # 检查服务是否正常运行
+        try:
+            response = requests.get("http://localhost:25535/health", timeout=5)
+            if response.status_code == 200:
+                print("[弹幕代理] 服务健康检查通过")
+                return True
+            else:
+                print(f"[弹幕代理] 服务健康检查失败: {response.status_code}")
+                return False
+        except Exception as e:
+            print(f"[弹幕代理] 服务健康检查出错: {e}")
+            # 即使健康检查失败，也返回True，因为服务可能还在启动中
+            return True
+            
+    except Exception as e:
+        print(f"[弹幕代理] 启动服务失败: {e}")
+        danmaku_proxy_process = None
+        danmaku_proxy_pid = None
+        return False
+
+# 新增：停止弹幕代理服务
+async def stop_danmaku_proxy_service():
+    """停止弹幕代理服务"""
+    global danmaku_proxy_process, danmaku_proxy_pid
+    
+    try:
+        if danmaku_proxy_process is None:
+            print("[弹幕代理] 服务未运行")
+            return True
+            
+        print(f"[弹幕代理] 正在停止服务，PID: {danmaku_proxy_pid}")
+        
+        # 优雅终止进程
+        danmaku_proxy_process.terminate()
+        
+        # 等待进程结束
+        try:
+            danmaku_proxy_process.wait(timeout=5)
+            print("[弹幕代理] 服务已停止")
+        except subprocess.TimeoutExpired:
+            # 如果进程没有正常结束，强制终止
+            danmaku_proxy_process.kill()
+            danmaku_proxy_process.wait()
+            print("[弹幕代理] 服务已强制停止")
+            
+        danmaku_proxy_process = None
+        danmaku_proxy_pid = None
+        return True
+        
+    except Exception as e:
+        print(f"[弹幕代理] 停止服务失败: {e}")
+        return False
+
 # API路由
 @app.post("/api/live/start", response_model=ApiResponse)
 async def start_live(request: LiveConfigRequest):
@@ -6122,6 +6209,17 @@ async def start_live(request: LiveConfigRequest):
                 config.bilibili_ROOM_OWNER_AUTH_CODE
             ]):
                 return ApiResponse(success=False, message="请完整填写开放平台配置信息")
+        
+        # 先启动弹幕代理服务
+        print("[直播启动] 正在启动弹幕代理服务...")
+        proxy_started = await start_danmaku_proxy_service()
+        if not proxy_started:
+            print("[直播启动] 弹幕代理服务启动失败，继续启动直播监听...")
+            # 即使弹幕代理启动失败，也继续启动直播监听
+        else:
+            print("[直播启动] 弹幕代理服务启动成功")
+            # 等待弹幕代理服务完全启动
+            await asyncio.sleep(1)
         
         # 创建停止事件
         stop_event = threading.Event()
@@ -6151,6 +6249,10 @@ async def stop_live():
         # 设置停止事件
         if stop_event:
             stop_event.set()
+        
+        # 停止弹幕代理服务
+        print("[直播停止] 正在停止弹幕代理服务...")
+        await stop_danmaku_proxy_service()
         
         # 如果有事件循环，在其中停止客户端
         if current_loop and not current_loop.is_closed():

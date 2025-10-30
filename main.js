@@ -1,7 +1,7 @@
 const remoteMain = require('@electron/remote/main')
 const { app, BrowserWindow, ipcMain, screen, shell, dialog, Tray, Menu } = require('electron')
 const { clipboard, nativeImage,desktopCapturer  } = require('electron')
-const { autoUpdater } = require('electron-updater')
+// const { autoUpdater } = require('electron-updater') // 禁用自动更新
 const path = require('path')
 const { spawn } = require('child_process')
 const { exec } = require('child_process');
@@ -316,8 +316,8 @@ function createSkeletonWindow() {
   // 加载骨架屏页面
   mainWindow.loadFile(path.join(__dirname, 'static/skeleton.html'))
   
-  // 设置自动更新
-  setupAutoUpdater()
+  // 设置自动更新 - 已禁用
+  // setupAutoUpdater() // 禁用自动更新功能
   
   // 窗口状态同步
   mainWindow.on('maximize', () => {
@@ -455,30 +455,10 @@ async function waitForBackend() {
   throw new Error('Backend failed to start')
 }
 
-// 配置自动更新
+// 配置自动更新 - 已禁用
 function setupAutoUpdater() {
-  autoUpdater.autoDownload = false; // 先禁用自动下载
-  if (isDev) {
-    autoUpdater.on('error', (err) => {
-      mainWindow.webContents.send('update-error', err.message);
-    });
-  }
-  autoUpdater.on('update-available', (info) => {
-    updateAvailable = true;
-    // 显示更新按钮并开始下载
-    mainWindow.webContents.send('update-available', info);
-    autoUpdater.downloadUpdate(); // 自动开始下载
-  });
-  autoUpdater.on('download-progress', (progressObj) => {
-    mainWindow.webContents.send('download-progress', {
-      percent: progressObj.percent.toFixed(1),
-      transferred: (progressObj.transferred / 1024 / 1024).toFixed(2),
-      total: (progressObj.total / 1024 / 1024).toFixed(2)
-    });
-  });
-  autoUpdater.on('update-downloaded', () => {
-    mainWindow.webContents.send('update-downloaded');
-  });
+  console.log('Auto updater is disabled for independent development');
+  // 空函数，禁用自动更新功能
 }
 
 // 确保只运行一个实例
@@ -701,41 +681,21 @@ app.whenReady().then(async () => {
       });
       return { success: true, savePath: dlItem.getSavePath() };
     });
-    // 检查更新IPC
+    // 检查更新IPC - 已禁用
     ipcMain.handle('check-for-updates', async () => {
-      if (isDev) {
-        console.log('Auto updates are disabled in development mode.')
-        return { updateAvailable: false }
-      }
-      try {
-        const result = await autoUpdater.checkForUpdates()
-        // 只返回必要的可序列化数据
-        return {
-          updateAvailable: updateAvailable,
-          updateInfo: result ? {
-            version: result.updateInfo.version,
-            releaseDate: result.updateInfo.releaseDate
-          } : null
-        }
-      } catch (error) {
-        console.error('检查更新出错:', error)
-        return { 
-          updateAvailable: false, 
-          error: error.message 
-        }
-      }
+      console.log('Update checking is disabled for independent development')
+      return { updateAvailable: false }
     })
 
-    // 下载更新IPC
+    // 下载更新IPC - 已禁用
     ipcMain.handle('download-update', () => {
-      if (updateAvailable) {
-        return autoUpdater.downloadUpdate()
-      }
+      console.log('Update downloading is disabled for independent development')
+      return Promise.resolve()
     })
 
-    // 安装更新IPC
+    // 安装更新IPC - 已禁用
     ipcMain.handle('quit-and-install', () => {
-      setTimeout(() => autoUpdater.quitAndInstall(), 500);
+      console.log('Update installation is disabled for independent development')
     });
             
     // 加载主页面
